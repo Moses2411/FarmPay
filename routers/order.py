@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-import random
+import secrets
 from uuid import UUID
-
 from db.database import get_db
-from db.model import Order, OrderItem, Product, User, FarmerProfile
+from db.model import Order, OrderItem, Product, User, FarmerProfile, Notification
 from db.schemas import OrderCreate, OrderStatusResponse
 from authentication.OAuth2 import get_current_user
 
@@ -13,7 +12,7 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 
 
 def generate_otp():
-    return str(random.randint(100000, 999999))
+    return secrets.token_hex(3).upper()  # 6 hex characters
 
 
 @router.post("/create")
@@ -90,6 +89,29 @@ def create_order(
         )
         db.add(order_item)
         item["product"].available_quantity -= item["quantity"]
+
+    db.commit()
+
+    # Notify buyer
+    buyer_notification = Notification(
+        user_id=current_user.id,
+        title="Order Created",
+        message=f"Your order has been created. Your delivery verification code is {otp_code}. Share this code with the dispatch rider to confirm delivery.",
+    )
+    db.add(buyer_notification)
+
+    # Notify farmers
+    farmers_notified = set()
+    for item in order_items:
+        farmer_id = item["product"].farmer_id
+        if farmer_id not in farmers_notified:
+            farmer_notification = Notification(
+                user_id=farmer_id,
+                title="New Order Received",
+                message=f"A new order has been placed for your product {item['product'].name}. Order ID: {str(order.id)}",
+            )
+            db.add(farmer_notification)
+            farmers_notified.add(farmer_id)
 
     db.commit()
 

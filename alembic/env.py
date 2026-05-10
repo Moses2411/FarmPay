@@ -2,16 +2,15 @@
 import os
 import sys
 from logging.config import fileConfig
-from dotenv import load_dotenv  # Add this to load .env file
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
-from alembic import context
-
-# Load environment variables from .env file
-# This will look for .env in your project root
+# Load .env BEFORE importing anything that needs DATABASE_URL
+from dotenv import load_dotenv
 load_dotenv()
+
+from alembic import context
 
 # Add your project directory to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -31,10 +30,19 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 def get_url():
-    """Get database URL from environment variable"""
+    """Get database URL - defaults to SQLite for local dev"""
     url = os.getenv("DATABASE_URL")
-    if not url:
-        raise ValueError("DATABASE_URL environment variable is not set!")
+    
+    # Only use PostgreSQL if explicitly provided and valid
+    if url and (url.startswith("postgresql://") or url.startswith("postgres://")):
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql://", 1)
+    else:
+        # Fall back to SQLite for local development
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        url = f"sqlite:///{os.path.join(base_dir, 'farm_pay.db')}"
+        print(f"Using SQLite database: {url}")
+    
     return url
 
 def run_migrations_offline() -> None:

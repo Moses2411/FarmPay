@@ -7,7 +7,7 @@ from db.database import get_db
 from db.schemas import CreateDisputeResponse
 from db.model import Dispute, DisputeImage, Order, User, Payment
 from authentication.OAuth2 import get_current_user
-from services.disease_detector import detect_disease
+from services.disease_detector import analyze_image
 
 router = APIRouter(prefix="/disputes", tags=["Disputes"])
 
@@ -59,13 +59,13 @@ def create_dispute(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
 
-        result = detect_disease(file_path)
+        result = analyze_image(file_path)
 
         dispute_image = DisputeImage(
             dispute_id=dispute.id,
             image_url=file_path,
-            disease_detected=result.get("disease_detected"),
-            disease_name=result.get("disease_name")
+            disease_detected=not result.get("is_healthy"),
+            disease_name=result.get("name")
         )
 
         db.add(dispute_image)

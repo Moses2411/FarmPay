@@ -11,7 +11,7 @@ from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
 from db.schemas import ProductResponse
 from authentication.OAuth2 import get_current_user
-from services.disease_detector import detect_disease
+from services.disease_detector import analyze_image, get_supported
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -26,12 +26,12 @@ def upload_product(
     price: float = Form(...),
     available_quantity: int = Form(...),
     unit: str = Form(...),
+    crop_type: str = Form("auto", description="Crop type: auto, cassava, yam, rice, maize, tomato, pepper, okra, melon, etc."),
     image: UploadFile = File(..., description="Upload product image"),
 
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Only farmers can upload
     if current_user.role != "farmer":
         raise HTTPException(status_code=403, detail="Only farmers can upload products")
 
@@ -39,7 +39,6 @@ def upload_product(
     if not valid:
         raise HTTPException(status_code = 403, detail = "You dont yet have a market place profile")
 
-    # Create product first (pending)
     product = Product(
         farmer_id=current_user.id,
         name=name,
@@ -55,16 +54,13 @@ def upload_product(
     db.commit()
     db.refresh(product)
 
-    # Process single image
-    file_ext = image.filename.split(".")[-1]
+    file_ext = image.filename.split(".")[-1] if image.filename else "jpg"
     file_name = f"{uuid.uuid4()}.{file_ext}"
     file_path = os.path.join(UPLOAD_DIR, file_name)
 
-    # Save image locally
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(image.file, buffer)
 
-    # Save image record
     product_image = ProductImage(
         product_id=product.id,
         image_url=file_path
@@ -73,27 +69,33 @@ def upload_product(
     db.commit()
     db.refresh(product_image)
 
-    # Run disease detection
-    result = detect_disease(file_path)
+    result = analyze_image(file_path, crop_type)
 
-    # Save scan result
+    target_crop = name.lower().strip()
+    detected_crop = result.get("detected_crop", "").lower().strip()
+    provided_crop = crop_type.lower().strip() if crop_type and crop_type != "auto" else None
+    
+    if provided_crop and provided_crop != "auto":
+        pass
+    elif detected_crop and detected_crop != "unknown" and detected_crop != target_crop:
+        db.rollback()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Image mismatch: uploaded '{target_crop}' but detected '{detected_crop}'. Please upload image of {target_crop}."
+        )
+
     scan = ScanResult(
         image_id=product_image.id,
-        disease_detected=result["disease_detected"],
-        disease_name=result["disease_name"],
-        status=result["status"]
+        disease_detected=not result["is_healthy"],
+        disease_name=result["name"],
+        status="scanned",
+        confidence=result["confidence"]
     )
     db.add(scan)
     db.commit()
 
-    # Final decision based on single image
-    if result["disease_detected"]:
-        product.scan_status = "rejected"
-        product.is_approved = False
-    else:
-        product.scan_status = "approved"
-        product.is_approved = True
-
+    product.scan_status = "scanned"
+    product.is_approved = True
     db.commit()
     db.refresh(product)
 
@@ -101,12 +103,20 @@ def upload_product(
         "message": "Product uploaded successfully",
         "scan_status": product.scan_status,
         "is_approved": product.is_approved,
-        "product_id": str(product.id)
+        "product_id": str(product.id),
+        "crop_type": result["crop_type"],
+        "issue_type": result["issue_type"],
+        "name": result["name"],
+        "confidence": result["confidence"],
+        "treatment": result["treatment"],
     }
 
 @router.get('/all', response_model= List[ProductResponse])
 def get_verified_products(db: Session = Depends(get_db)):
-    products = db.query(Product).filter(Product.is_approved == True, Product.scan_status == "approved").all()
+    products = db.query(Product).filter(
+        Product.scan_status == "scanned",
+        Product.is_approved == True
+    ).all()
     return products
 
 @router.get('/specific{product_id}')

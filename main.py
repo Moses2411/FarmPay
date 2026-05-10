@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from routers import auth, product, admin, order, payment, rider, review, dispute
+from routers import auth, product, admin, order, payment, rider, review, dispute, notifications
 from db.database import engine
 from db import model
 import traceback
@@ -36,6 +36,7 @@ app.include_router(dispute.router)
 app.include_router(admin.router)
 app.include_router(rider.router)
 app.include_router(review.router)
+app.include_router(notifications.router)
 
 @app.middleware("http")
 async def catch_exceptions_middleware(request: Request, call_next):

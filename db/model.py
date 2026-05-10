@@ -36,6 +36,7 @@ class User(Base):
     orders = relationship('Order',back_populates='buyer',foreign_keys='Order.buyer_id')
     reviews = relationship('Review', back_populates='buyer')
     deliveries = relationship('Order',back_populates='dispatch_rider',foreign_keys='Order.dispatch_rider_id')
+    notifications = relationship('Notification', back_populates='user')
 
 
 
@@ -96,6 +97,7 @@ class ScanResult(Base):
     disease_detected = Column(Boolean)
     disease_name = Column(String)
     status = Column(String)
+    confidence = Column(Float, default=0.0)
 
     scanned_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -204,3 +206,16 @@ class Review(Base):
 
     product = relationship('Product', back_populates='reviews')
     buyer = relationship('User', back_populates='reviews')
+
+
+class Notification(Base):
+    __tablename__ = 'notifications'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'))
+    title = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship('User')
