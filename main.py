@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from routers import auth, product, admin, order, payment, rider, review, dispute, notifications
 from db.database import engine
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()  
 
 app = FastAPI(title="FarmPay API", version="1.0.0")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 model.Base.metadata.create_all(bind=engine)
 

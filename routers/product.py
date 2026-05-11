@@ -63,7 +63,7 @@ def upload_product(
 
     product_image = ProductImage(
         product_id=product.id,
-        image_url=file_path
+        image_url=f"/uploads/{file_name}"
     )
     db.add(product_image)
     db.commit()
@@ -104,12 +104,13 @@ def upload_product(
         "scan_status": product.scan_status,
         "is_approved": product.is_approved,
         "product_id": str(product.id),
+        "image_url": product_image.image_url,
         "crop_type": result["crop_type"],
         "issue_type": result["issue_type"],
         "name": result["name"],
         "confidence": result["confidence"],
         "treatment": result["treatment"],
-    }
+}
 
 @router.get('/all', response_model= List[ProductResponse])
 def get_verified_products(db: Session = Depends(get_db)):
