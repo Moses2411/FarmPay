@@ -193,7 +193,6 @@ def analyze_image(image_path: str, crop_type: str = "auto"):
         - is_healthy: bool
         - issue_type: "disease" | "pest" | "healthy"
         - name: specific disease/pest name
-        - confidence: percentage
         - treatment: recommended action
         - detected_crop: crop detected in the image
     """
@@ -209,7 +208,6 @@ def analyze_image(image_path: str, crop_type: str = "auto"):
         "is_healthy": disease_result["is_healthy"],
         "issue_type": disease_result["issue_type"],
         "name": disease_result["name"],
-        "confidence": disease_result["confidence"],
         "crop_type": crop_name,
         "detected_crop": base_result.get("detected_crop", crop_name),
         "details": disease_result["details"],
@@ -232,7 +230,6 @@ def _detect_with_model(image_path: str):
             probs = F.softmax(output, dim=1)
             top_probs, top_indices = probs.topk(3)
             
-            confidence = round(top_probs[0][0].item() * 100, 2)
             pred_idx = top_indices[0][0].item()
             label = idx_to_label[str(pred_idx)]
             
@@ -243,7 +240,6 @@ def _detect_with_model(image_path: str):
             "detected_crop": crop,
             "disease_name": label,
             "is_healthy": is_healthy,
-            "confidence": confidence,
             "alternatives": [
                 {"label": idx_to_label[str(top_indices[0][i].item())], "prob": round(top_probs[0][i].item() * 100, 2)}
                 for i in range(1, 3)
@@ -269,7 +265,6 @@ def _check_nigerian_diseases(crop: str, ml_result: dict):
             "is_healthy": True,
             "issue_type": "healthy",
             "name": "healthy",
-            "confidence": ml_result.get("confidence", 95),
             "details": f"{crop} is healthy",
             "treatment": None,
             "severity": "none",
@@ -282,22 +277,21 @@ def _check_nigerian_diseases(crop: str, ml_result: dict):
         if "healthy" not in disease_lower:
             for disease_key, disease_name in diseases.items():
                 if disease_key in disease_lower or disease_key in ml_disease.lower():
-                    return _build_response(disease_key, disease_name, ml_result.get("confidence", 80), "disease")
+                    return _build_response(disease_key, disease_name, "disease")
     
     for disease_key, disease_name in diseases.items():
         if disease_key in ml_disease.lower():
-            return _build_response(disease_key, disease_name, ml_result.get("confidence", 80), "disease")
+            return _build_response(disease_key, disease_name, "disease")
     
-    return _build_response("unknown", ml_disease, ml_result.get("confidence", 70), "disease")
+    return _build_response("unknown", ml_disease, "disease")
 
 
-def _build_response(key: str, name: str, confidence: float, issue_type: str):
+def _build_response(key: str, name: str, issue_type: str):
     """Build response with treatment"""
     return {
         "is_healthy": key == "healthy",
         "issue_type": issue_type if key != "healthy" else "healthy",
         "name": name,
-        "confidence": confidence,
         "details": _get_details(key, name),
         "treatment": _get_treatment(key),
         "severity": _get_severity(key),
@@ -372,7 +366,6 @@ def _default_result():
         "detected_crop": "unknown",
         "disease_name": "",
         "is_healthy": True,
-        "confidence": 100,
         "alternatives": []
     }
 

@@ -118,7 +118,7 @@ async def quick_detect(
     """
     Quick disease detection (uses original PlantVillage model)
     
-    Returns: disease detected, disease name, confidence %, treatment
+    Returns: disease detected, disease name %, treatment
     """
     file_ext = image.filename.split(".")[-1] if image.filename else "jpg"
     file_name = f"{uuid.uuid4()}.{file_ext}"
