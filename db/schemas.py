@@ -81,7 +81,6 @@ class ProductImageScanResult(BaseModel):
     disease_detected: bool
     disease_name: Optional[str] = None
     status: str
-
     class Config:
         from_attributes = True
 

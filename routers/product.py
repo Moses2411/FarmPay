@@ -89,7 +89,7 @@ def upload_product(
         disease_detected=not result["is_healthy"],
         disease_name=result["name"],
         status="scanned",
-        confidence=result["confidence"]
+    
     )
     db.add(scan)
     db.commit()
@@ -108,7 +108,6 @@ def upload_product(
         "crop_type": result["crop_type"],
         "issue_type": result["issue_type"],
         "name": result["name"],
-        "confidence": result["confidence"],
         "treatment": result["treatment"],
 }
 
