@@ -81,7 +81,6 @@ class ProductImageScanResult(BaseModel):
     disease_detected: bool
     disease_name: Optional[str] = None
     status: str
-    confidence: float = 0.0
 
     class Config:
         from_attributes = True
@@ -240,3 +239,29 @@ class ReviewResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Squad Payment ───────────────────────────────────────────
+
+class SquadInitiateRequest(BaseModel):
+    order_id: UUID
+    payment_gateway: str = "squad"
+
+
+class SquadInitiateResponse(BaseModel):
+    transaction_ref: str
+    checkout_url: str
+    transaction_amount: int
+    authorized_channels: List[str]
+    currency: str
+    merchant_id: str
+    order_id: str
+
+    class Config:
+        from_attributes = True
+
+
+class SquadWebhookPayload(BaseModel):
+    Event: str
+    TransactionRef: str
+    Body: dict
