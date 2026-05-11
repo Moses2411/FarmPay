@@ -1,6 +1,5 @@
 """
-FarmPay Payment Router
-Supports Squad and Interswitch payment gateways
+FarmPay Payment Router - Squad Payment Gateway
 """
 
 import os
@@ -16,16 +15,11 @@ from sqlalchemy.orm import Session
 
 from db.database import get_db
 from db.model import Order, Payment, User, Notification
-from db.schemas import PaymentVerifyRequest, SquadWebhookPayload
+from db.schemas import PaymentVerifyRequest
 from services.squad_payment import (
     initiate_payment as squad_initiate,
     verify_payment as squad_verify,
 )
-from services.payment import (
-    initiate_payment as isw_initiate,
-    verify_payment as isw_verify,
-)
-from services.payout import release_funds_to_farmer
 from authentication.OAuth2 import get_current_user
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -69,7 +63,6 @@ def _confirm_payment(payment: Payment, order: Order, db: Session):
 @router.post("/initiate/{order_id}")
 def initiate_payment(
     order_id: UUID,
-    payment_gateway: str = "squad",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -99,78 +92,40 @@ def initiate_payment(
         Payment.order_id == order.id,
     ).first()
 
-    if payment_gateway == "squad":
-        try:
-            payment_info = squad_initiate(
-                amount_kobo=int(order.total_amount * 100),
-                buyer_email=current_user.email,
-                buyer_name=current_user.full_name,
-            )
-        except Exception as e:
-            raise HTTPException(502, f"Could not reach Squad: {str(e)}")
-
-        if existing_payment:
-            existing_payment.payment_reference = payment_info["transaction_ref"]
-            existing_payment.payment_gateway = "squad"
-            existing_payment.status = "pending"
-        else:
-            db.add(Payment(
-                order_id=order.id,
-                payment_reference=payment_info["transaction_ref"],
-                payment_gateway="squad",
-                amount=order.total_amount,
-                status="pending",
-                escrow_status="held",
-            ))
-        db.commit()
-
-        return {
-            "checkout_url": payment_info["checkout_url"],
-            "transaction_ref": payment_info["transaction_ref"],
-            "amount": order.total_amount,
-            "transaction_amount": payment_info["transaction_amount"],
-            "authorized_channels": payment_info["authorized_channels"],
-            "currency": payment_info["currency"],
-            "merchant_id": payment_info["merchant_id"],
-            "order_id": str(order.id),
-            "payment_gateway": "squad",
-        }
-
-    else:
-        payment_info = isw_initiate(
-            amount_naira=order.total_amount,
+    try:
+        payment_info = squad_initiate(
+            amount_kobo=int(order.total_amount * 100),
             buyer_email=current_user.email,
             buyer_name=current_user.full_name,
         )
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach Squad: {str(e)}")
 
-        if existing_payment:
-            existing_payment.payment_reference = payment_info["transaction_ref"]
-            existing_payment.payment_gateway = "interswitch"
-            existing_payment.status = "pending"
-        else:
-            db.add(Payment(
-                order_id=order.id,
-                payment_reference=payment_info["transaction_ref"],
-                payment_gateway="interswitch",
-                amount=order.total_amount,
-                status="pending",
-                escrow_status="held",
-            ))
-        db.commit()
+    if existing_payment:
+        existing_payment.payment_reference = payment_info["transaction_ref"]
+        existing_payment.payment_gateway = "squad"
+        existing_payment.status = "pending"
+    else:
+        db.add(Payment(
+            order_id=order.id,
+            payment_reference=payment_info["transaction_ref"],
+            payment_gateway="squad",
+            amount=order.total_amount,
+            status="pending",
+            escrow_status="held",
+        ))
+    db.commit()
 
-        return {
-            "transaction_ref": payment_info["transaction_ref"],
-            "amount_kobo": payment_info["amount_kobo"],
-            "hash": payment_info["hash"],
-            "merchant_code": payment_info["merchant_code"],
-            "pay_item_id": payment_info["pay_item_id"],
-            "customer_email": payment_info["customer_email"],
-            "customer_name": payment_info["customer_name"],
-            "currency": payment_info["currency"],
-            "mode": payment_info["mode"],
-            "order_id": str(order.id),
-            "payment_gateway": "interswitch",
-        }
+    return {
+        "checkout_url": payment_info["checkout_url"],
+        "transaction_ref": payment_info["transaction_ref"],
+        "amount": order.total_amount,
+        "transaction_amount": payment_info["transaction_amount"],
+        "authorized_channels": payment_info["authorized_channels"],
+        "currency": payment_info["currency"],
+        "merchant_id": payment_info["merchant_id"],
+        "order_id": str(order.id),
+    }
 
 
 @router.post("/verify")
@@ -197,46 +152,12 @@ def verify_payment(
     if not order:
         raise HTTPException(404, "Order not found")
 
-    if payment.payment_gateway == "squad":
-        try:
-            result = squad_verify(payload.transaction_ref)
-        except Exception as e:
-            raise HTTPException(502, f"Could not reach Squad: {str(e)}")
+    try:
+        result = squad_verify(payload.transaction_ref)
+    except Exception as e:
+        raise HTTPException(502, f"Could not reach Squad: {str(e)}")
 
-        if result.get("transaction_status") == "Success":
-            _confirm_payment(payment, order, db)
-            return {
-                "message": "Payment confirmed. Funds held in escrow until delivery.",
-                "order_id": str(order.id),
-                "amount": payment.amount,
-                "escrow_status": payment.escrow_status,
-                "transaction_status": "Success",
-            }
-        else:
-            payment.status = "failed"
-            order.payment_status = "failed"
-            db.commit()
-            raise HTTPException(
-                400,
-                f"Payment not successful. Status: {result.get('transaction_status')}"
-            )
-
-    else:
-        amount_kobo = int(payment.amount * 100)
-        try:
-            result = isw_verify(payload.transaction_ref, amount_kobo)
-        except Exception as e:
-            raise HTTPException(502, f"Could not reach Interswitch: {str(e)}")
-
-        if result.get("ResponseCode") != "00":
-            payment.status = "failed"
-            order.payment_status = "failed"
-            db.commit()
-            raise HTTPException(
-                400,
-                f"Payment not successful. Code: {result.get('ResponseCode')}"
-            )
-
+    if result.get("transaction_status") == "Success":
         _confirm_payment(payment, order, db)
         return {
             "message": "Payment confirmed. Funds held in escrow until delivery.",
@@ -244,6 +165,14 @@ def verify_payment(
             "amount": payment.amount,
             "escrow_status": payment.escrow_status,
         }
+    else:
+        payment.status = "failed"
+        order.payment_status = "failed"
+        db.commit()
+        raise HTTPException(
+            400,
+            f"Payment not successful. Status: {result.get('transaction_status')}"
+        )
 
 
 @router.post("/webhook")
@@ -312,22 +241,21 @@ def squad_callback(
             "status": "paid",
         }
 
-    if payment.payment_gateway == "squad":
-        try:
-            result = squad_verify(transaction_ref)
-            transaction_status = result.get("transaction_status", "")
-        except Exception:
-            transaction_status = ""
+    try:
+        result = squad_verify(transaction_ref)
+        transaction_status = result.get("transaction_status", "")
+    except Exception:
+        transaction_status = ""
 
-        if _is_success(transaction_status):
-            order = db.query(Order).filter(Order.id == payment.order_id).first()
-            if order:
-                _confirm_payment(payment, order, db)
-            return {
-                "message": "Payment confirmed",
-                "order_id": str(payment.order_id),
-                "status": "paid",
-            }
+    if _is_success(transaction_status):
+        order = db.query(Order).filter(Order.id == payment.order_id).first()
+        if order:
+            _confirm_payment(payment, order, db)
+        return {
+            "message": "Payment confirmed",
+            "order_id": str(payment.order_id),
+            "status": "paid",
+        }
 
     return {
         "message": "Payment pending",
