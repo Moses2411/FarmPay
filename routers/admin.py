@@ -41,8 +41,20 @@ def create_dispatch_rider(
     )
     db.add(new_rider)
     db.commit()
+    db.refresh(new_rider)  # Ensure we have the generated ID
 
-    return {"message": "Dispatch rider created successfully"}
+    # Return rider details along with success message (maintains backward compatibility)
+    return {
+        "message": "Dispatch rider created successfully",
+        "rider": {
+            "id": str(new_rider.id),
+            "full_name": new_rider.full_name,
+            "email": new_rider.email,
+            "phone_number": new_rider.phone_number,
+            "is_verified": new_rider.is_verified,
+            "created_at": new_rider.created_at.isoformat() if new_rider.created_at else None,
+        }
+    }
 
 
 @router.put("/assign-rider/{order_id}/{rider_id}")
@@ -73,10 +85,17 @@ def assign_rider(
 
     db.commit()
 
+    # Return rider details along with existing response (maintains backward compatibility)
     return {
         "message": f"Rider {rider.full_name} assigned to order successfully",
         "order_id": str(order_id),
         "rider_id": str(rider_id),
+        "rider": {
+            "id": str(rider.id),
+            "full_name": rider.full_name,
+            "email": rider.email,
+            "phone_number": rider.phone_number,
+        }
     }
 
 
@@ -145,38 +164,46 @@ def resolve_dispute(
 
     return {"message": message, "order_id": str(order.id)}
 
-@router.post('/verify_user{user_id}')
-def verify_user(user_id: UUID, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
 
+@router.post('/verify_user/{user_id}')  # Fixed: added missing slash
+def verify_user(user_id: UUID, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code = 404, detail = "user not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
-    user.is_verified == "true"
-    return {"user verified"}
+    # FIXED: Changed from == to = (assignment, not comparison)
+    user.is_verified = True
+    db.commit()
+    
+    return {
+        "message": "User verified successfully",
+        "user_id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name
+    }
 
 
 @router.get("/", response_model=list[DisputeResponse])
-def get_all_disputes(
+def get_all_disputes_v2(
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin)):
-
+    
     disputes = db.query(Dispute).all()
     return disputes
 
-from datetime import datetime
 
 @router.patch("/approve/{dispute_id}")
-def approve_dispute(dispute_id: str, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)
+def approve_dispute(
+    dispute_id: str, 
+    db: Session = Depends(get_db), 
+    admin: User = Depends(get_current_admin)
 ):
-
     dispute = db.query(Dispute).filter(Dispute.id == dispute_id).first()
     if not dispute:
         raise HTTPException(status_code=404, detail="Dispute not found")
 
     order = db.query(Order).filter(Order.id == dispute.order_id).first()
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
-
 
     dispute.status = "verified"
     order.delivery_status = "disputed"
@@ -187,35 +214,83 @@ def approve_dispute(dispute_id: str, db: Session = Depends(get_db), admin: User 
 
     db.commit()
 
-    return {"message": "Dispute approved, buyer refunded"}
+    return {
+        "message": "Dispute approved, buyer refunded",
+        "dispute_id": str(dispute.id),
+        "order_id": str(order.id)
+    }
 
 
 @router.get("/all_users")
 def get_all_users(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     users = db.query(User).filter(User.role == "buyer").count()
-    return users
+    return {"role": "buyer", "count": users}  # Changed to return dict for consistency
+
 
 @router.get("/all_farmers")
 def get_all_farmers(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     farmers = db.query(User).filter(User.role == "farmer").count()
-    return farmers
-    
+    return {"role": "farmer", "count": farmers}  # Changed to return dict for consistency
+
+
 @router.get("/all_orders")
-def get_all_orders(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+def get_all_orders_count(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     orders = db.query(Order).count()
-    return orders
+    return {"total_orders": orders}  # Changed to return dict for consistency
+
 
 @router.get("/all_payments")
 def get_all_payments(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     payments = db.query(Payment).count()
-    return payments
+    return {"total_payments": payments}  # Changed to return dict for consistency
+
 
 @router.get("/all_farmer_profile")
 def get_all_sellers(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     farmer_profile = db.query(FarmerProfile).count()
-    return farmer_profile
+    return {"total_farmer_profiles": farmer_profile}  # Changed to return dict for consistency
+
 
 @router.get("/all_products")
 def get_all_products(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     products = db.query(Product).count()
-    return products
+    return {"total_products": products}  # Changed to return dict for consistency
+
+
+# NEW ENDPOINT: Get all dispatch riders (doesn't break anything existing)
+@router.get("/dispatch-riders")
+def get_all_dispatch_riders(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """Get all dispatch riders with their details and order statistics"""
+    riders = db.query(User).filter(User.role == "dispatch_rider").order_by(User.created_at.desc()).all()
+    
+    result = []
+    for rider in riders:
+        # Count orders assigned to this rider
+        total_assigned = db.query(Order).filter(Order.dispatch_rider_id == rider.id).count()
+        completed_deliveries = db.query(Order).filter(
+            Order.dispatch_rider_id == rider.id,
+            Order.delivery_status == "confirmed"
+        ).count()
+        pending_deliveries = db.query(Order).filter(
+            Order.dispatch_rider_id == rider.id,
+            Order.delivery_status.in_(["assigned", "in_transit"])
+        ).count()
+        
+        result.append({
+            "id": str(rider.id),
+            "full_name": rider.full_name,
+            "email": rider.email,
+            "phone_number": rider.phone_number,
+            "is_verified": rider.is_verified,
+            "created_at": rider.created_at.isoformat() if rider.created_at else None,
+            "statistics": {
+                "total_assigned_orders": total_assigned,
+                "completed_deliveries": completed_deliveries,
+                "pending_deliveries": pending_deliveries,
+            }
+        })
+    
+    return result
