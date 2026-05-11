@@ -15,6 +15,13 @@ def generate_transaction_ref() -> str:
     return f"FARMPAY-{uuid.uuid4().hex[:12].upper()}"
 
 
+def _get_headers():
+    return {
+        "Authorization": f"Bearer {SQUAD_SECRET_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
 def initiate_payment(
     amount_kobo: int,
     buyer_email: str,
@@ -27,11 +34,6 @@ def initiate_payment(
 
     if payment_channels is None:
         payment_channels = ["card", "bank", "ussd", "transfer"]
-
-    headers = {
-        "Authorization": SQUAD_SECRET_KEY,
-        "Content-Type": "application/json",
-    }
 
     payload = {
         "amount": amount_kobo,
@@ -48,9 +50,11 @@ def initiate_payment(
     response = requests.post(
         f"{SQUAD_BASE_URL}/transaction/initiate",
         json=payload,
-        headers=headers,
+        headers=_get_headers(),
         timeout=15,
     )
+
+    print(f"[SQUAD] Status: {response.status_code}, Body: {response.text}")
 
     if response.status_code == 401:
         raise Exception("Squad API: Unauthorized - Invalid API key")
@@ -75,13 +79,9 @@ def initiate_payment(
 
 
 def verify_payment(transaction_ref: str) -> dict:
-    headers = {
-        "Authorization": SQUAD_SECRET_KEY,
-    }
-
     response = requests.get(
         f"{SQUAD_BASE_URL}/transaction/verify/{transaction_ref}",
-        headers=headers,
+        headers=_get_headers(),
         timeout=15,
     )
 
@@ -109,11 +109,6 @@ def verify_payment(transaction_ref: str) -> dict:
 
 
 def simulate_transfer_payment(virtual_account_number: str, amount: int) -> dict:
-    headers = {
-        "Authorization": SQUAD_SECRET_KEY,
-        "Content-Type": "application/json",
-    }
-
     payload = {
         "virtual_account_number": virtual_account_number,
         "amount": amount,
@@ -122,7 +117,7 @@ def simulate_transfer_payment(virtual_account_number: str, amount: int) -> dict:
     response = requests.post(
         f"{SQUAD_BASE_URL}/virtual-account/simulate/payment",
         json=payload,
-        headers=headers,
+        headers=_get_headers(),
         timeout=15,
     )
 
