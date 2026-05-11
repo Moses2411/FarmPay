@@ -152,7 +152,8 @@ def verify_user(user_id: UUID, db: Session = Depends(get_db), admin: User = Depe
     if not user:
         raise HTTPException(status_code = 404, detail = "user not found")
 
-    user.is_verified == "true"
+    user.is_verified = True
+    db.commit()
     return {"user verified"}
 
 

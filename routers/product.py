@@ -121,7 +121,7 @@ def get_verified_products(db: Session = Depends(get_db)):
 
 @router.get('/specific{product_id}')
 def get_single_product(product_id: UUID, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_approved == "true").first()
+    product = db.query(Product).filter(Product.id == product_id, Product.is_approved == True).first()
     if not product:
         raise HTTPException(status_code = 404, detail = 'Product not found')
     return product
