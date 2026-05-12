@@ -6,7 +6,6 @@ from db.schemas import UserCreate, UserLogin, UserResponse, FarmerProfileBase, F
 from authentication.hashing import Hash
 from authentication.OAuth2 import create_access_token, get_current_user
 from sqlalchemy import func
-from services.identity import verify_nin, verify_bank_account
 
 
 router = APIRouter(prefix="/auth", tags=["authentication"])

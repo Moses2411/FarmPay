@@ -51,8 +51,7 @@ def list_available_riders(
     admin=Depends(get_current_admin),
 ):
     assigned_rider_ids = db.query(Order.dispatch_rider_id).filter(
-        Order.dispatch_rider_id.isnot(None),
-        Order.delivery_status.in_(["assigned", "in_transit"]),
+        Order.dispatch_rider_id.isnot(None),Order.delivery_status.in_(["assigned", "in_transit"]),
     ).distinct().all()
     assigned_rider_ids = [r[0] for r in assigned_rider_ids]
 
