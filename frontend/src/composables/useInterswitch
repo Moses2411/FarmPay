@@ -1,0 +1,35 @@
+import { ref } from 'vue';
+import api from '@/api/api'; // Your axios instance
+
+export function useInterswitch() {
+  const isProcessing = ref(false);
+  const error = ref(null);
+
+  const initializeEscrow = async (product, quantity, total) => {
+    isProcessing.value = true;
+    error.value = null;
+    
+    try {
+      // This hits your backend, which then calls Interswitch
+      const response = await api.post('/escrow/initialize', {
+        product_id: product.id,
+        amount: total,
+        quantity: quantity,
+        merchant_code: 'MX12345', // Example Interswitch requirement
+      });
+
+      // Interswitch usually returns a redirect URL for their Webpay/Checkout
+      if (response.data.checkout_url) {
+        window.location.href = response.data.checkout_url;
+      }
+      return response.data;
+    } catch (err) {
+      error.value = "Interswitch connection failed. Please try again.";
+      console.error(err);
+    } finally {
+      isProcessing.value = false;
+    }
+  };
+
+  return { initializeEscrow, isProcessing, error };
+}
