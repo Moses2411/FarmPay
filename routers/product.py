@@ -16,7 +16,7 @@ from services.disease_detector import analyze_image, get_supported
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
-UPLOAD_DIR = getattr(settings, 'UPLOAD_DIR', 'uploads')
+UPLOAD_DIR = '/uploads'
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
@@ -54,7 +54,6 @@ def upload_product(
     price: float = Form(...),
     available_quantity: int = Form(...),
     unit: str = Form(...),
-    crop_type: str = Form("auto", description="Crop type: auto, cassava, yam, rice, maize, tomato, pepper, okra, melon, etc."),
     image: UploadFile = File(..., description="Upload product image"),
 
     db: Session = Depends(get_db),
@@ -99,21 +98,21 @@ def upload_product(
 
     result = analyze_image(file_path, crop_type)
 
-    target_crop = name.lower().strip()
-    detected_crop = result.get("detected_crop", "").lower().strip()
-    provided_crop = crop_type.lower().strip() if crop_type and crop_type != "auto" else None
+    # target_crop = name.lower().strip()
+    # detected_crop = result.get("detected_crop", "").lower().strip()
+    # provided_crop = crop_type.lower().strip() if crop_type and crop_type != "auto" else None
 
-    if provided_crop and provided_crop != "auto":
-        pass
-    elif detected_crop and detected_crop != "unknown" and detected_crop != target_crop:
-        os.remove(file_path)
-        db.delete(product_image)
-        db.delete(product)
-        db.commit()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image mismatch: uploaded '{target_crop}' but detected '{detected_crop}'. Please upload image of {target_crop}."
-        )
+    # if provided_crop and provided_crop != "auto":
+    #     pass
+    # elif detected_crop and detected_crop != "unknown" and detected_crop != target_crop:
+    #     os.remove(file_path)
+    #     db.delete(product_image)
+    #     db.delete(product)
+    #     db.commit()
+    #     raise HTTPException(
+    #         status_code=400,
+    #         detail=f"Image mismatch: uploaded '{target_crop}' but detected '{detected_crop}'. Please upload image of {target_crop}."
+    #     )
 
     scan = ScanResult(
         image_id=product_image.id,
@@ -136,7 +135,7 @@ def upload_product(
         "product_id": str(product.id),
         "image_url": product_image.image_url,
         "crop_type": result["crop_type"],
-        "issue_type": result["issue_type"],
+        # "issue_type": result["issue_type"],
         "name": result["name"],
         "treatment": result["treatment"],
     }
