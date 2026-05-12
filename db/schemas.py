@@ -147,6 +147,7 @@ class OrderStatusResponse(BaseModel):
     delivery_location: str
     dispatch_rider_id: Optional[UUID] = None
     is_otp_verified: bool
+    otp_code: str
     created_at: datetime
 
     class Config:

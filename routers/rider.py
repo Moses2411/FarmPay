@@ -66,11 +66,9 @@ def confirm_delivery(
     }
 
 
-@router.get("/orders")
+@router.get("/rider/orders")
 def get_rider_orders(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.role != "dispatch_rider":
         raise HTTPException(403, "Only dispatch riders allowed")
 
@@ -78,23 +76,7 @@ def get_rider_orders(
         Order.dispatch_rider_id == current_user.id
     ).all()
 
-    return [
-        {
-            "id": str(order.id),
-            "buyer_id": str(order.buyer_id),
-            "total_amount": order.total_amount,
-            "status": order.status,
-            "payment_status": order.payment_status,
-            "delivery_status": order.delivery_status,
-            "escrow_status": order.escrow_status,
-            "delivery_location": order.delivery_location,
-            "delivery_fee": order.delivery_fee,
-            "otp_code": order.otp_code,
-            "is_otp_verified": order.is_otp_verified,
-            "created_at": order.created_at.isoformat() if order.created_at else None,
-        }
-        for order in orders
-    ]
+    return orders
 
 @router.patch("/order/{order_id}/picked-up")
 def mark_picked_up(
