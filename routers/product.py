@@ -6,7 +6,7 @@ import shutil
 import os
 import uuid
 from uuid import UUID
-from core.config import settings
+from core.config import config
 
 from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
@@ -16,7 +16,7 @@ from services.disease_detector import analyze_image, get_supported
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
-UPLOAD_DIR = settings.UPLOAD_DIR
+UPLOAD_DIR = '/uploads'
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
@@ -34,7 +34,7 @@ def _save_image(image: UploadFile, upload_dir: str) -> str:
     file_name = f"{uuid.uuid4()}.{file_ext}"
     file_path = os.path.join(upload_dir, file_name)
 
-    image.file.seek(0, 2)
+    image.file.seek(0, 2) 
     size = image.file.tell()
     image.file.seek(0)
 
