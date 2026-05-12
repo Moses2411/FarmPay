@@ -6,7 +6,6 @@ import shutil
 import os
 import uuid
 from uuid import UUID
-from core.config import config
 from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
 from db.schemas import ProductResponse, ProductImageSchema, ProductImageScanResult
