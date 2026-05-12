@@ -90,30 +90,6 @@ def create_order(
         db.add(order_item)
         item["product"].available_quantity -= item["quantity"]
 
-    db.commit()
-
-    # Notify buyer
-    buyer_notification = Notification(
-        user_id=current_user.id,
-        title="Order Created",
-        message=f"Your order has been created. Your delivery verification code is {otp_code}. Share this code with the dispatch rider to confirm delivery.",
-    )
-    db.add(buyer_notification)
-
-    # Notify farmers
-    farmers_notified = set()
-    for item in order_items:
-        farmer_id = item["product"].farmer_id
-        if farmer_id not in farmers_notified:
-            farmer_notification = Notification(
-                user_id=farmer_id,
-                title="New Order Received",
-                message=f"A new order has been placed for your product {item['product'].name}. Order ID: {str(order.id)}",
-            )
-            db.add(farmer_notification)
-            farmers_notified.add(farmer_id)
-
-    db.commit()
 
     return {
         "message": "Order created. Proceed to payment.",

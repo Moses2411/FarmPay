@@ -97,7 +97,6 @@ class ScanResult(Base):
     disease_detected = Column(Boolean)
     disease_name = Column(String)
     status = Column(String)
-    confidence = Column(Float, default=0.0)
 
     scanned_at = Column(DateTime(timezone=True), server_default=func.now())
 
