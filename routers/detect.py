@@ -12,7 +12,7 @@ from authentication.OAuth2 import get_current_user
 
 router = APIRouter(prefix="/detect", tags=["Disease Detection"])
 
-UPLOAD_DIR = settings.UPLOAD_DIR
+UPLOAD_DIR = getattr(settings, 'UPLOAD_DIR', 'uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
