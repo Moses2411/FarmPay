@@ -7,7 +7,6 @@ import os
 import uuid
 from uuid import UUID
 from core.config import config
-
 from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
 from db.schemas import ProductResponse, ProductImageSchema, ProductImageScanResult
@@ -16,7 +15,7 @@ from services.disease_detector import analyze_image, get_supported
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
-UPLOAD_DIR = settings.UPLOAD_DIR
+UPLOAD_DIR = '/uploads'
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
