@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, status, APIRouter
 from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
-
+from datetime import datetime
 from authentication.OAuth2 import get_current_user
 from db.database import get_db
 from db.model import User, UserRole, Order, Dispute, Payment, FarmerProfile, Product
@@ -43,6 +43,40 @@ def create_dispatch_rider(
     db.commit()
 
     return {"message": "Dispatch rider created successfully"}
+
+
+@router.get("/dispatch-riders")
+def list_available_riders(
+    db: Session = Depends(get_db),
+    admin=Depends(get_current_admin),
+):
+    assigned_rider_ids = db.query(Order.dispatch_rider_id).filter(
+        Order.dispatch_rider_id.isnot(None),
+        Order.delivery_status.in_(["assigned", "in_transit"]),
+    ).distinct().all()
+    assigned_rider_ids = [r[0] for r in assigned_rider_ids]
+
+    if assigned_rider_ids:
+        available_riders = db.query(User).filter(
+            User.role == UserRole.dispatch_rider,
+            User.id.notin_(assigned_rider_ids),
+            User.is_verified == True,
+        ).all()
+    else:
+        available_riders = db.query(User).filter(
+            User.role == UserRole.dispatch_rider,
+            User.is_verified == True,
+        ).all()
+
+    return [
+        {
+            "id": str(rider.id),
+            "full_name": rider.full_name,
+            "email": rider.email,
+            "phone_number": rider.phone_number,
+        }
+        for rider in available_riders
+    ]
 
 
 @router.put("/assign-rider/{order_id}/{rider_id}")
@@ -164,8 +198,6 @@ def get_all_disputes(
 
     disputes = db.query(Dispute).all()
     return disputes
-
-from datetime import datetime
 
 @router.patch("/approve/{dispute_id}")
 def approve_dispute(dispute_id: str, db: Session = Depends(get_db), admin: User = Depends(get_current_admin)
