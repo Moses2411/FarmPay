@@ -1,7 +1,3 @@
-"""
-FarmPay Payment Router - Squad Payment Gateway
-"""
-
 import os
 import hmac
 import hashlib

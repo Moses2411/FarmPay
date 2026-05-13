@@ -11,12 +11,6 @@ class UserRole(str, Enum):
     admin = "admin"
     dispatch_rider = "dispatch_rider"
 
-
-# ── User ──────────────────────────────────────────────────
-
-
-# ── User ──────────────────────────────────────────────────
-
 class UserBase(BaseModel):
     full_name: str
     email: EmailStr
@@ -40,9 +34,6 @@ class UserResponse(UserBase):
 
     class Config:
         from_attributes = True
-
-
-# ── Farmer profile ────────────────────────────────────────
 
 class FarmerProfileBase(BaseModel):
     business_name: str
@@ -70,9 +61,6 @@ class FarmerProfileSchema(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# ── Product ───────────────────────────────────────────────
 
 class ProductImageScanResult(BaseModel):
     disease_detected: bool
@@ -107,8 +95,6 @@ class ProductResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── Order ─────────────────────────────────────────────────
 
 class OrderItemCreate(BaseModel):
     product_id: UUID
@@ -150,9 +136,6 @@ class OrderStatusResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── Payment ───────────────────────────────────────────────
-
 class PaymentVerifyRequest(BaseModel):
     transaction_ref: str
 
@@ -168,14 +151,9 @@ class PaymentResponse(BaseModel):
         from_attributes = True
 
 
-# ── OTP ───────────────────────────────────────────────────
-
 class OTPVerifyRequest(BaseModel):
     order_id: UUID
     otp_code: str
-
-
-# ── Dispute ───────────────────────────────────────────────
 
 class DisputeCreate(BaseModel):
     order_id: UUID
@@ -213,15 +191,11 @@ class DisputeResponse(BaseModel):
         from_attributes = True
 
 
-# ── Admin ─────────────────────────────────────────────────
-
 class DispatchRiderCreate(BaseModel):
     full_name: str
     email: EmailStr
     password: str
     phone_number: str
-
-# ── Review ─────────────────────────────────────────────────
 
 class CreateReviewRequest(BaseModel):
     product_id: UUID
@@ -238,8 +212,6 @@ class ReviewResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── Squad Payment ───────────────────────────────────────────
 
 class SquadInitiateRequest(BaseModel):
     order_id: UUID
