@@ -121,6 +121,7 @@ class OrderItemCreate(BaseModel):
 class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
     delivery_location: Location
+    buyer_address: Optional[str] = None
 
 
 class OrderResponse(BaseModel):

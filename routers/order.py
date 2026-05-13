@@ -7,6 +7,7 @@ from db.database import get_db
 from db.model import Order, OrderItem, Product, User, FarmerProfile, Notification
 from db.schemas import OrderCreate, OrderStatusResponse
 from authentication.OAuth2 import get_current_user
+from services.mapbox_service import calculate_delivery_fee, geocode_address
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -28,7 +29,7 @@ def create_order(
     order_items = []
     farmer_location = None
 
-    for item in request.items:
+    for item in order_items:
         product = db.query(Product).filter(
             Product.id == item.product_id,
             Product.is_approved == True,
@@ -54,11 +55,23 @@ def create_order(
         total_amount += product.price * item.quantity
         order_items.append({"product": product, "quantity": item.quantity})
 
-    # Delivery fee logic
-    if request.delivery_location == farmer_location:
-        delivery_fee = 2000
+    buyer_address = request.buyer_address or request.delivery_location.value
+
+    origin_coords = geocode_address(farmer_location)
+    dest_coords = geocode_address(buyer_address)
+
+    if origin_coords[0] and dest_coords[0]:
+        origin_str = f"{origin_coords[0]},{origin_coords[1]}"
+        dest_str = f"{dest_coords[0]},{dest_coords[1]}"
+        fee_info = calculate_delivery_fee(origin_str, dest_str)
+        delivery_fee = fee_info["delivery_fee"]
+        distance_km = fee_info["distance_km"]
     else:
-        delivery_fee = 5000
+        if request.delivery_location.value == farmer_location:
+            delivery_fee = 1000
+        else:
+            delivery_fee = 5000
+        distance_km = None
 
     final_amount = total_amount + delivery_fee
     otp_code = generate_otp()
@@ -96,6 +109,7 @@ def create_order(
         "order_id": str(order.id),
         "product_total": total_amount,
         "delivery_fee": delivery_fee,
+        "distance_km": distance_km,
         "final_amount": final_amount,
         "otp": otp_code
     }
