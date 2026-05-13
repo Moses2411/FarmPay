@@ -13,11 +13,6 @@ class UserRole(str, enum.Enum):
     admin = "admin"
     dispatch_rider = "dispatch_rider"
 
-class Location(str, enum.Enum):
-    kaduna_south = "kaduna_south"
-    kaduna_north = "kaduna_north"
-    kaduna_central = "kaduna_central"
-
 
 class User(Base):
     __tablename__ = 'users'

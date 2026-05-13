@@ -12,10 +12,7 @@ class UserRole(str, Enum):
     dispatch_rider = "dispatch_rider"
 
 
-class Location(str, Enum):
-    kaduna_south = "kaduna_south"
-    kaduna_north = "kaduna_north"
-    kaduna_central = "kaduna_central"
+# ── User ──────────────────────────────────────────────────
 
 
 # ── User ──────────────────────────────────────────────────
@@ -49,7 +46,7 @@ class UserResponse(UserBase):
 
 class FarmerProfileBase(BaseModel):
     business_name: str
-    location: Location
+    location: str
     nin: int
     bank_name: str
     account_number: str
@@ -120,9 +117,8 @@ class OrderItemCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
-    delivery_location: Location
+    delivery_address: str
     buyer_address: Optional[str] = None
-
 
 class OrderResponse(BaseModel):
     id: UUID

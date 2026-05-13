@@ -81,6 +81,9 @@ def profile(request: FarmerProfileBase, db:Session = Depends(get_db), loggedIn: 
     if user.role != "farmer":
         raise HTTPException(status_code = 403, detail = "Only farmers can create a profile")
 
+    existing = db.query(FarmerProfile).filter(FarmerProfile.user_id == loggedIn.id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Profile already exists")
 
     new_profile = FarmerProfile(
         business_name = request.business_name,
@@ -90,9 +93,6 @@ def profile(request: FarmerProfileBase, db:Session = Depends(get_db), loggedIn: 
         bank_name = request.bank_name,
         account_number = request.account_number,
     )
-
-    if new_profile.location not in ["kaduna_south","kaduna_north", "kaduna_central"]:
-        raise HTTPException(status_code = 403, detail = "Invalid location")
 
     db.add(new_profile)
     db.commit()

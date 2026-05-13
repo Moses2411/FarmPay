@@ -13,7 +13,7 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 
 
 def generate_otp():
-    return secrets.token_hex(3).upper()  # 6 hex characters
+    return secrets.token_hex(3).upper()
 
 
 @router.post("/create")
@@ -22,14 +22,14 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in  ["buyer", "farmer"]:
+    if current_user.role not in ["buyer", "farmer"]:
         raise HTTPException(403, "Only buyers and farmers can create orders")
 
     total_amount = 0
     order_items = []
-    farmer_location = None
+    farmer_address = None
 
-    for item in order_items:
+    for item in request.items:
         product = db.query(Product).filter(
             Product.id == item.product_id,
             Product.is_approved == True,
@@ -48,16 +48,16 @@ def create_order(
         if not farmer_profile:
             raise HTTPException(400, "Farmer profile not found")
 
-        if farmer_location and farmer_location != farmer_profile.location:
+        if farmer_address and farmer_address != farmer_profile.location:
             raise HTTPException(400, "All items must be from the same location")
 
-        farmer_location = farmer_profile.location
+        farmer_address = farmer_profile.location
         total_amount += product.price * item.quantity
         order_items.append({"product": product, "quantity": item.quantity})
 
-    buyer_address = request.buyer_address or request.delivery_location.value
+    buyer_address = request.buyer_address or request.delivery_address
 
-    origin_coords = geocode_address(farmer_location)
+    origin_coords = geocode_address(farmer_address)
     dest_coords = geocode_address(buyer_address)
 
     if origin_coords[0] and dest_coords[0]:
@@ -67,10 +67,7 @@ def create_order(
         delivery_fee = fee_info["delivery_fee"]
         distance_km = fee_info["distance_km"]
     else:
-        if request.delivery_location.value == farmer_location:
-            delivery_fee = 1000
-        else:
-            delivery_fee = 5000
+        delivery_fee = 1000
         distance_km = None
 
     final_amount = total_amount + delivery_fee
@@ -85,7 +82,7 @@ def create_order(
         otp_expires_at=datetime.utcnow() + timedelta(hours=48),
         delivery_status="pending",
         escrow_status="held",
-        delivery_location=request.delivery_location,
+        delivery_location=request.delivery_address,
         delivery_fee=delivery_fee,
     )
 
@@ -103,6 +100,7 @@ def create_order(
         db.add(order_item)
         item["product"].available_quantity -= item["quantity"]
 
+    db.commit()
 
     return {
         "message": "Order created. Proceed to payment.",
@@ -111,7 +109,7 @@ def create_order(
         "delivery_fee": delivery_fee,
         "distance_km": distance_km,
         "final_amount": final_amount,
-        "otp": otp_code
+        "otp": otp_code,
     }
 
 
@@ -122,6 +120,7 @@ def get_my_orders(
 ):
     orders = db.query(Order).filter(Order.buyer_id == current_user.id).all()
     return orders
+
 
 @router.get("/{order_id}", response_model=OrderStatusResponse)
 def get_order(
