@@ -95,21 +95,6 @@ def upload_product(
 
     result = analyze_image(file_path, crop_type)
 
-    target_crop = name.lower().strip()
-    detected_crop = result.get("detected_crop", "").lower().strip()
-    provided_crop = crop_type.lower().strip() if crop_type and crop_type != "auto" else None
-
-    if not (provided_crop and provided_crop != "auto"):
-        if detected_crop and detected_crop != "unknown" and detected_crop != target_crop:
-            os.remove(file_path)
-            db.delete(product_image)
-            db.delete(product)
-            db.commit()
-            raise HTTPException(
-                400,
-                f"Image mismatch: uploaded '{target_crop}' but detected '{detected_crop}'",
-            )
-
     scan = ScanResult(
         image_id=product_image.id,
         disease_detected=not result["is_healthy"],
