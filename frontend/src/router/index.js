@@ -9,6 +9,7 @@ import CompleteProfile from "../pages/auth/CompleteProfile.vue";
 import BuyerDashboard from "../pages/buyer/Dashboard.vue";
 import FarmerDashboard from "../pages/farmer/Dashboard.vue";
 import RiderDashboard from "../pages/rider/Dashboard.vue";
+import Dashboard from "../components/dashboard/Dashboard.vue";
 
 const routes = [
   { path: "/", name: "Home", component: Home },
@@ -21,6 +22,26 @@ const routes = [
     name: "CompleteProfile",
     component: CompleteProfile,
     meta: { requiresAuth: true },
+  },
+
+  // Admin Dashboard Route
+  {
+    path: "/admin",
+    name: "AdminDashboard",
+    component: Dashboard,
+    meta: { requiresAuth: true, role: "admin" }, // Protect it for admin role
+    children: [
+      // This maps the GET requests from your image to specific sub-routes
+      { path: "", name: "AdminOverview", component: () => import("../pages/admin/Overview.vue") },
+      { path: "dispatch-riders", name: "AdminRiders", component: () => import("../pages/admin/Riders.vue") },
+      { path: "orders", name: "AdminOrders", component: () => import("../pages/admin/Orders.vue") },
+      { path: "disputes", name: "AdminDisputes", component: () => import("../pages/admin/Disputes.vue") },
+      { path: "all_users", name: "AdminAllUsers", component: () => import("../pages/admin/Users.vue") },
+      { path: "all_farmers", name: "AdminAllFarmers", component: () => import("../pages/admin/Farmers.vue") },
+      { path: "all_payments", name: "AdminAllPayments", component: () => import("../pages/admin/Payments.vue") },
+      { path: "all_farmer_profile", name: "AdminFarmerProfiles", component: () => import("../pages/admin/Profiles.vue") },
+      { path: "all_products", name: "AdminProducts", component: () => import("../pages/admin/Products.vue") },
+    ],
   },
 
   // Role-Specific Dashboards
