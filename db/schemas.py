@@ -136,6 +136,18 @@ class OrderStatusResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class FarmerOrder(BaseModel):
+    id: UUID
+    status: str
+    payment_status: str
+    delivery_status: str
+    escrow_status: str
+    total_amount: float
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class PaymentVerifyRequest(BaseModel):
     transaction_ref: str
 
@@ -154,6 +166,30 @@ class PaymentResponse(BaseModel):
 class OTPVerifyRequest(BaseModel):
     order_id: UUID
     otp_code: str
+
+
+class FarmerOrderItem(BaseModel):
+    product_id: UUID
+    product_name: str
+    quantity: int
+    price: float
+
+
+class FarmerOrder(BaseModel):
+    order_id: UUID
+    buyer_name: str
+    buyer_phone: str
+    delivery_address: str
+    delivery_fee: float
+    total_amount: float
+    status: str
+    payment_status: str
+    delivery_status: str
+    created_at: datetime
+    items: List[FarmerOrderItem] = []
+
+    class Config:
+        from_attributes = True
 
 class DisputeCreate(BaseModel):
     order_id: UUID

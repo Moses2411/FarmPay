@@ -4,8 +4,8 @@ from datetime import datetime, timedelta
 import secrets
 from uuid import UUID
 from db.database import get_db
-from db.model import Order, OrderItem, Product, User, FarmerProfile, Notification
-from db.schemas import OrderCreate, OrderStatusResponse
+from db.model import Order, OrderItem, Product, User, FarmerProfile
+from db.schemas import OrderCreate, OrderStatusResponse, FarmerOrder
 from authentication.OAuth2 import get_current_user
 from services.mapbox_service import calculate_delivery_fee, geocode_address
 
@@ -121,6 +121,47 @@ def get_my_orders(
     orders = db.query(Order).filter(Order.buyer_id == current_user.id).all()
     return orders
 
+@router.get("/farmer-orders", response_model=list[FarmerOrder])
+def get_farmer_orders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "farmer":
+        raise HTTPException(403, "Only farmers can view their orders")
+
+    orders = (
+        db.query(Order)
+        .join(OrderItem)
+        .join(Product)
+        .filter(Product.farmer_id == current_user.id)
+        .all()
+    )
+
+    result = []
+    for order in orders:
+        order_items = db.query(OrderItem).filter(OrderItem.order_id == order.id).all()
+        buyer = db.query(User).filter(User.id == order.buyer_id).first()
+
+        result.append({
+            "order_id": order.id,
+            "buyer_name": buyer.full_name if buyer else "Unknown",
+            "buyer_phone": buyer.phone_number if buyer else "Unknown",
+            "delivery_address": order.delivery_location,
+            "delivery_fee": order.delivery_fee,
+            "total_amount": order.total_amount,
+            "status": order.status,
+            "payment_status": order.payment_status,
+            "delivery_status": order.delivery_status,
+            "created_at": order.created_at,
+            "items": [
+                {
+                    "product_id": item.product_id,
+                    "product_name": item.product.name if item.product else "Unknown",
+                    "quantity": item.quantity,
+                    "price": item.price,
+                }
+                for item in order_items
+            ],
+        })
+
+    return result
 
 @router.get("/{order_id}", response_model=OrderStatusResponse)
 def get_order(
