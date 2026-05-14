@@ -10,7 +10,7 @@ from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
 from db.schemas import ProductResponse, ProductImageSchema, ProductImageScanResult
 from authentication.OAuth2 import get_current_user
-from services.disease_detector import analyze_image, get_supported
+from services.disease_detector import analyze_image, get_supported, SUPPORTED_CROPS
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -63,6 +63,13 @@ def upload_product(
     valid = db.query(FarmerProfile).filter(FarmerProfile.user_id == current_user.id).first()
     if not valid:
         raise HTTPException(403, "You dont yet have a market place profile")
+
+    if crop_type != "auto":
+        if crop_type.lower() not in SUPPORTED_CROPS:
+            raise HTTPException(
+                400,
+                f"Crop not supported. Allowed: {', '.join(SUPPORTED_CROPS)}"
+            )
 
     product = Product(
         farmer_id=current_user.id,

@@ -16,6 +16,13 @@ model = None
 idx_to_label = None
 
 
+SUPPORTED_CROPS = [
+    "cassava", "yam", "rice", "maize", "sorghum", "cowpea",
+    "tomato", "pepper", "okra", "melon", "spinach", "potato",
+    "apple", "cherry", "grape", "orange", "peach", "blueberry",
+    "raspberry", "strawberry", "soybean", "squash"
+]
+
 ALL_CROP_DISEASES = {
     "cassava": {
         "healthy": "Healthy",
