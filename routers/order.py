@@ -123,17 +123,10 @@ def get_my_orders(
 
 @router.get("/farmer-orders", response_model=list[FarmerOrder])
 def get_farmer_orders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    
     if current_user.role != "farmer":
         raise HTTPException(403, "Only farmers can view their orders")
-
-    orders = (
-        db.query(Order)
-        .join(OrderItem)
-        .join(Product)
-        .filter(Product.farmer_id == current_user.id)
-        .all()
-    )
-
+    orders = (db.query(Order).join(OrderItem).join(Product).filter(Product.farmer_id == current_user.id).all())
     result = []
     for order in orders:
         order_items = db.query(OrderItem).filter(OrderItem.order_id == order.id).all()
