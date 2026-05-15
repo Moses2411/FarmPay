@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from authentication.OAuth2 import get_current_user
 from authentication.hashing import Hash
 from db.database import get_db
-from db.model import FarmerProfile, Notification, Order, OrderItem, Product, User
+from db.model import FarmerProfile, Notification, Order, OrderItem, Payment, Product, User
 from db.schemas import OrderCreate, OrderStatusResponse, FarmerOrder, FarmerOrderItem
 from services.mapbox_service import calculate_delivery_fee, geocode_address
 
