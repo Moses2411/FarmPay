@@ -147,6 +147,7 @@ class Order(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     delivery_location = Column(String, nullable=False)
     delivery_fee = Column(Numeric(12, 2), default=0)
+    delivery_fee_kobo = Column(Integer, default=0)
 
     buyer = relationship("User", back_populates="orders", foreign_keys=[buyer_id])
     dispatch_rider = relationship(

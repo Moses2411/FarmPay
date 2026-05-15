@@ -213,67 +213,6 @@ def _release_escrow_to_farmer(order_id: UUID, db: Session) -> dict:
     }
 
 
-@router.post("/verify-otp")
-def verify_otp(
-    order_id: UUID,
-    otp_code: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Buyer submits OTP to confirm delivery receipt.
-    This triggers escrow release to the farmer.
-    Only the buyer who owns the order can call this.
-    """
-
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        raise HTTPException(404, "Order not found")
-
-    if order.buyer_id != current_user.id:
-        raise HTTPException(403, "Not your order")
-
-    if order.delivery_status not in ["in_transit", "delivered", "assigned"]:
-        raise HTTPException(400, "Order has not been dispatched yet")
-
-    if order.is_otp_verified:
-        raise HTTPException(400, "OTP already verified — delivery already confirmed")
-
-    if not order.otp_hash:
-        raise HTTPException(500, "No OTP on record for this order")
-
-    if datetime.utcnow() > order.otp_expires_at:
-        raise HTTPException(400, "OTP has expired")
-
-    if not _verify_otp(otp_code.strip().upper(), order.otp_hash):
-        raise HTTPException(400, "Incorrect OTP")
-
-    # Mark delivery confirmed
-    order.is_otp_verified = True
-    order.delivery_status = "confirmed"
-    order.confirmed_at = datetime.utcnow()
-    order.status = "completed"
-    db.commit()
-
-    # Release escrow to farmer via Squad Transfer API
-    try:
-        release_result = _release_escrow_to_farmer(order_id=order.id, db=db)
-        return {
-            "message": "Delivery confirmed. Funds released to farmer.",
-            "order_id": str(order.id),
-            "escrow_status": order.escrow_status,
-            "payout": release_result,
-        }
-    except Exception as e:
-        logger.error(f"[ESCROW] OTP verified but payout failed for order {order.id}: {e}")
-        # Don't fail the OTP confirm — flag for manual review
-        return {
-            "message": "Delivery confirmed. Payout is being processed.",
-            "order_id": str(order.id),
-            "warning": "Payout is queued — contact support if not received within 24h.",
-        }
-
-
 @router.get("/my-orders", response_model=list[OrderStatusResponse])
 def get_my_orders(
     db: Session = Depends(get_db),

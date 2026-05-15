@@ -130,7 +130,11 @@ def upload_product(
 
 @router.get("/all", response_model=List[ProductResponse])
 def get_verified_products(db: Session = Depends(get_db)):
-    return db.query(Product).filter(
+    from sqlalchemy.orm import joinedload
+    return db.query(Product).options(
+        joinedload(Product.images).joinedload(ProductImage.scan_result),
+        joinedload(Product.farmer).joinedload(User.farmer_profile)
+    ).filter(
         Product.scan_status == "scanned",
         Product.is_approved == True,
     ).all()
