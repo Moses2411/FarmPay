@@ -197,6 +197,7 @@ class OrderItem(Base):
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id"))
     quantity = Column(Integer)
     price = Column(Numeric(12, 2))
+    price_kobo = Column(Integer)
 
     order = relationship("Order", back_populates="items")
     product = relationship("Product", back_populates="order_items")
