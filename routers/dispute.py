@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
-from typing import List
+
 
 from authentication.OAuth2 import get_current_user
 from db.database import get_db
@@ -28,7 +28,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 def create_dispute(
     order_id: str = Form(...),
     reason: str = Form(...),
-    images: List[UploadFile] = File(...),
+    image: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -58,22 +58,21 @@ def create_dispute(
     db.commit()
     db.refresh(dispute)
 
-    for image in images:
-        ext = image.filename.split(".")[-1] if image.filename else "jpg"
-        file_name = f"{uuid.uuid4()}.{ext}"
-        file_path = os.path.join(UPLOAD_DIR, file_name)
+    ext = image.filename.split(".")[-1] if image.filename else "jpg"
+    file_name = f"{uuid.uuid4()}.{ext}"
+    file_path = os.path.join(UPLOAD_DIR, file_name)
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
 
-        result = analyze_image(file_path)
+    result = analyze_image(file_path)
 
-        db.add(DisputeImage(
-            dispute_id=dispute.id,
-            image_url=file_path,
-            disease_detected=not result.get("is_healthy", True),
-            disease_name=result.get("name"),
-        ))
+    db.add(DisputeImage(
+        dispute_id=dispute.id,
+        image_url=file_path,
+        disease_detected=not result.get("is_healthy", True),
+        disease_name=result.get("name"),
+    ))
 
     order.delivery_status = "disputed"
     db.commit()
