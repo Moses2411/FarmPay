@@ -37,7 +37,6 @@ const routes = [
       { path: "orders", name: "AdminOrders", component: () => import("../pages/admin/Orders.vue") },
       { path: "disputes", name: "AdminDisputes", component: () => import("../pages/admin/Disputes.vue") },
       { path: "all_users", name: "AdminAllUsers", component: () => import("../pages/admin/Users.vue") },
-      { path: "all_farmers", name: "AdminAllFarmers", component: () => import("../pages/admin/Farmers.vue") },
       { path: "all_payments", name: "AdminAllPayments", component: () => import("../pages/admin/Payments.vue") },
       { path: "all_farmer_profile", name: "AdminFarmerProfiles", component: () => import("../pages/admin/Profiles.vue") },
       { path: "all_products", name: "AdminProducts", component: () => import("../pages/admin/Products.vue") },

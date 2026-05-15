@@ -56,7 +56,7 @@ const steps = ref([
         <div class="w-9 h-9 bg-[#2d7a18] rounded-full flex items-center justify-center">
           <Wallet class="text-white" :size="18" />
         </div>
-        <span class="font-serif text-xl font-semibold tracking-tight">
+        <span class="text-xl font-semibold tracking-tight">
           FarmPay<span class="text-[#5cb83a]">.</span>ng
         </span>
       </div>

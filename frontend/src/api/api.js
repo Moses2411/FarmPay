@@ -43,10 +43,25 @@ export const completeProfile = (data) => api.post("/auth/farmer_profile", data);
 export const getUserProfile = () => api.get("/auth/me"); // Assuming this exists
 
 export const createRider = (data) => api.post("/admin/create-dispatch-rider", data)
-export const getAllRiders = () => api.get("/admin/dispatch-riders");
+export const getAllRiders = (data) => api.get(`/admin/dispatch-riders/details?page=${data.page}&per_page=${data.per_page}`);
 export const assignRider = (data) => api.put(`/admin/assign-rider/${data.order_id}/${data.rider_id}`);
 
 // all orders
 export const getAllOrders = (data) => api.get(`/admin/orders/details?page=${data.page}&per_page=${data.per_page}`);
+
+// all users
+export const getAllUsers = (data) => api.get(`/admin/users/details?page=${data.page}&per_page=${data.per_page}`);
+// all payment
+export const getAllPayment = (data) => api.get(`/admin/payments/details?page=${data.page}&per_page=${data.per_page}`);
+
+// farmers profile
+export const getFarmersProfile = (data) => api.get(`/admin/farmer-profiles/details?page=${data.page}&per_page=${data.per_page}`);
+
+// all products
+export const getAllProducts = (data) => api.get(`/admin/products/details?page=${data.page}&per_page=${data.per_page}`);
+
+// resolve dispute
+export const getAllDisputes = (data) => api.get(`/admin/disputes?page=${data.page}&per_page=${data.per_page}`);
+export const resolveDispute = (data) => api.put(`/admin/dispute/${data.disputeId}/resolve`, data.body);
 // Rest of your APIs...
 export default api;
