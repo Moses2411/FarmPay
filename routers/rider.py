@@ -76,6 +76,9 @@ def confirm_delivery(
 
     db.commit()
 
+    current_user.is_available = True
+    db.commit()
+
     return {
         "message": "Delivery confirmed successfully",
         "order_id": str(order.id),
@@ -126,32 +129,19 @@ def mark_picked_up(
     }
 
 
-@router.post("/assign/{order_id}")
-def assign_rider(
-    order_id: UUID,
+@router.post("/status")
+def update_rider_status(
+    is_available: bool,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if current_user.role != "dispatch_rider":
-        raise HTTPException(403, "Only dispatch riders can accept orders")
+        raise HTTPException(403, "Only dispatch riders can update status")
 
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        raise HTTPException(404, "Order not found")
-
-    if order.payment_status != "paid":
-        raise HTTPException(400, "Order has not been paid yet")
-
-    if order.dispatch_rider_id:
-        raise HTTPException(400, "Order already assigned to a rider")
-
-    order.dispatch_rider_id = current_user.id
-    order.assigned_at = datetime.utcnow()
-    order.delivery_status = "assigned"
+    current_user.is_available = is_available
     db.commit()
 
     return {
-        "message": "Order assigned to rider",
-        "order_id": str(order_id),
-        "rider_id": str(current_user.id),
+        "message": f"Rider status set to {'available' if is_available else 'busy'}",
+        "is_available": current_user.is_available,
     }

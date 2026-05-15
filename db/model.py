@@ -27,6 +27,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     role = Column(Enum(UserRole), nullable=False)
     is_verified = Column(Boolean, default=True)
+    is_available = Column(Boolean, default=True)  # For dispatch riders
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     farmer_profile = relationship("FarmerProfile", back_populates="user", uselist=False)
@@ -212,16 +213,11 @@ class Payment(Base):
     payment_gateway = Column(String)
     amount = Column(Numeric(12, 2))
     amount_kobo = Column(Integer)
-    status = Column(String)
-    # pending | paid | failed | refunded
-    escrow_status = Column(String, default="held")
-    # held | released | refunded
-
+    status = Column(String)# pending | paid | failed | refunded
+    escrow_status = Column(String, default="held")# held | released | refunded
     paid_at = Column(DateTime(timezone=True), nullable=True)
     released_at = Column(DateTime, nullable=True)
     refunded_at = Column(DateTime, nullable=True)
-
-    # Squad Transfer API payout tracking
     payout_reference = Column(String, nullable=True)
     payout_status = Column(String, nullable=True)  # pending | success | failed
     payout_initiated_at = Column(DateTime, nullable=True)

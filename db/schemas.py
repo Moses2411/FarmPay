@@ -229,6 +229,11 @@ class DisputeCreate(BaseModel):
     reason: str
 
 
+class OrderAssign(BaseModel):
+    rider_id: UUID
+    rider_status: str  # "available" or "busy"
+
+
 class DisputeResolve(BaseModel):
     action: str  # "refund_buyer", "release_farmer", or "auto" (automatic decision)
 
@@ -267,6 +272,7 @@ class DispatchRiderCreate(BaseModel):
     email: str
     password: str
     phone_number: str
+    status: str = "Available"
 
 
 class DispatchRiderResponse(BaseModel):
@@ -276,6 +282,7 @@ class DispatchRiderResponse(BaseModel):
     phone_number: str
     is_verified: bool
     created_at: datetime
+    status: str
 
     class Config:
         from_attributes = True

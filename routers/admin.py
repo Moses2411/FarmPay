@@ -1,8 +1,3 @@
-"""
-routers/admin.py
-Admin endpoints — dispute resolution NOW triggers real escrow release/refund.
-"""
-
 import logging
 from datetime import datetime
 from typing import Optional
@@ -18,7 +13,7 @@ from db.model import (
     Dispute, DisputeImage, FarmerProfile, Notification, Order, OrderItem,
     Payment, Product, ProductImage, ScanResult, User, UserRole
 )
-from db.schemas import DispatchRiderCreate, DisputeResolve, DisputeResponse
+from db.schemas import DispatchRiderCreate, DisputeResolve, DisputeResponse, OrderAssign
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -106,6 +101,7 @@ def list_available_riders(
 def assign_rider(
     order_id: UUID,
     rider_id: UUID,
+    rider_status: str = "available",
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
@@ -115,6 +111,9 @@ def assign_rider(
 
     if order.payment_status != "paid":
         raise HTTPException(400, "Can only assign rider to paid orders")
+
+    if order.dispatch_rider_id:
+        raise HTTPException(400, "Order already has a rider assigned")
 
     rider = db.query(User).filter(
         User.id == rider_id,
@@ -126,10 +125,17 @@ def assign_rider(
     order.dispatch_rider_id = rider_id
     order.delivery_status = "assigned"
     order.assigned_at = datetime.utcnow()
+
+    if rider_status == "busy":
+        rider.is_available = False
+    elif rider_status == "available":
+        rider.is_available = True
+
     db.commit()
 
     return {
         "message": f"Rider {rider.full_name} assigned to order {str(order_id)[:8]}",
+        "rider_status": "busy" if not rider.is_available else "available",
         "order_id": str(order_id),
         "rider": {
             "id": str(rider.id),
