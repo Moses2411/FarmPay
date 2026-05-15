@@ -331,7 +331,7 @@ def verify_payment_endpoint(
     except Exception as e:
         raise HTTPException(502, f"Could not reach Squad: {str(e)}")
 
-    if result.get("transaction_status") == "Success":
+    if str(result.get("transaction_status", "")).strip().lower() == "success":
         _confirm_payment(payment, order, db)
         return {
             "message": "Payment confirmed. Funds held in escrow until delivery.",
