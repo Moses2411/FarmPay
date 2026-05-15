@@ -54,7 +54,6 @@ BANK_CODE_MAP = {
 
 
 def get_bank_code(bank_name: str) -> str:
-    """Resolve bank name to NIP code. Returns '044' (Access) as fallback."""
     code = BANK_CODE_MAP.get(bank_name.strip().lower())
     if not code:
         # Log unknown bank names so they can be added to the map
@@ -179,11 +178,11 @@ def create_farmer_profile(
             new_profile.bvn_verified_at = datetime.utcnow()
 
             db.commit()
-            print(f"✅ VA {va_data['account_number']} created for {request.business_name}")
+            print(f" VA {va_data['account_number']} created for {request.business_name}")
 
     except Exception as e:
         # VA creation failure is non-fatal — profile still saved
-        print(f"⚠️ VA creation failed for {request.business_name}: {str(e)}")
+        print(f"VA creation failed for {request.business_name}: {str(e)}")
 
     return new_profile
 
