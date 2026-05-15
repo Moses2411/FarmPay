@@ -43,6 +43,7 @@ class FarmerProfile(Base):
     business_name = Column(String)
     location = Column(String, nullable=False)
     nin = Column(Integer, nullable = False)
+    bvn = Column(Integer, nullable = False)
     bank_name = Column(String, nullable = False)
     account_number = Column(String, nullable = False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

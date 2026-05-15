@@ -251,9 +251,6 @@ def approve_dispute(
         "order_id": str(order.id)
     }
 
-
-# 
-
 @router.get("/all_users")
 def get_all_users(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
     users = db.query(User).filter(User.role == "buyer").count()
@@ -289,11 +286,6 @@ def get_all_products_count(db: Session = Depends(get_db), admin: User = Depends(
     products = db.query(Product).count()
     return products
 
-
-# ============================================================
-# NEW DETAIL ENDPOINTS (FULL DATA WITH PAGINATION)
-# ============================================================
-
 @router.get("/users/details")
 def get_users_details(
     db: Session = Depends(get_db),
@@ -302,7 +294,6 @@ def get_users_details(
     per_page: int = 20,
     role: Optional[str] = None,
 ):
-    """Get full user details with pagination and role filtering"""
     skip = (page - 1) * per_page
     
     query = db.query(User)
@@ -331,7 +322,6 @@ def get_users_details(
         "total_pages": (total + per_page - 1) // per_page if total > 0 else 1
     }
 
-
 @router.get("/products/details")
 def get_products_details(
     db: Session = Depends(get_db),
@@ -340,7 +330,6 @@ def get_products_details(
     per_page: int = 20,
     approved: Optional[bool] = None,
 ):
-    """Get full product details with farmer info and pagination"""
     skip = (page - 1) * per_page
     
     query = db.query(Product)
@@ -477,13 +466,10 @@ def get_farmer_profiles_details(
     page: int = 1,
     per_page: int = 20,
 ):
-    """Get full farmer profile details with pagination"""
     skip = (page - 1) * per_page
-    
     total = db.query(FarmerProfile).count()
     profiles = db.query(FarmerProfile).order_by(FarmerProfile.created_at.desc()).offset(skip).limit(per_page).all()
     
-    # Get user details for each profile
     user_ids = [p.user_id for p in profiles]
     users = db.query(User).filter(User.id.in_(user_ids)).all()
     user_map = {str(u.id): u for u in users}
