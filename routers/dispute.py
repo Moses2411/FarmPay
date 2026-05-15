@@ -42,8 +42,8 @@ def create_dispute(
     if order.buyer_id != current_user.id:
         raise HTTPException(403, "Not your order")
 
-    if order.delivery_status != "confirmed":
-        raise HTTPException(400, "You can only dispute a delivered order")
+    if order.delivery_status not in ["in_transit", "delivered", "assigned"]:
+        raise HTTPException(400, "Order has not been dispatched yet")
 
     if db.query(Dispute).filter(Dispute.order_id == order.id).first():
         raise HTTPException(400, "A dispute already exists for this order")

@@ -46,7 +46,7 @@ class FarmerProfile(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     business_name = Column(String)
     location = Column(String, nullable=False)
-    nin = Column(Integer, nullable=False)
+    nin = Column(String, nullable=False)
     bvn = Column(String, nullable=True)
     bank_name = Column(String, nullable=False)
     account_number = Column(String, nullable=False)
@@ -129,14 +129,11 @@ class Order(Base):
     buyer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     total_amount = Column(Numeric(12, 2))
     total_amount_kobo = Column(Integer)  # Integer kobo — source of truth for matching
-    status = Column(String, default="pending")
-    # pending | paid | in_transit | delivered | confirmed | disputed | completed
-    payment_status = Column(String, default="pending")
-    # pending | paid | refunded
-    delivery_status = Column(String, default="pending")
-    # pending | assigned | in_transit | delivered | confirmed | disputed
-    escrow_status = Column(String, default="held")
-    # held | released | refunded
+    status = Column(String, default="pending") # pending | paid | in_transit | delivered | confirmed | disputed | completed
+    payment_status = Column(String, default="pending") # pending | paid | refunded
+    delivery_status = Column(String, default="pending")# pending | assigned | in_transit | delivered | confirmed | disputed
+    escrow_status = Column(String, default="held")# held | released | refunded
+    
 
     # OTP — stored as bcrypt hash, never plaintext in DB
     otp_hash = Column(String, nullable=True)

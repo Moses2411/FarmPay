@@ -131,8 +131,6 @@ def create_farmer_profile(
     if db.query(FarmerProfile).filter(FarmerProfile.user_id == current_user.id).first():
         raise HTTPException(400, "Profile already exists")
 
-    if request.location not in ["kaduna_south", "kaduna_north", "kaduna_central"]:
-        raise HTTPException(400, "Invalid location")
 
     if len(request.bvn) != 11:
         raise HTTPException(400, "BVN must be exactly 11 digits")
@@ -143,7 +141,7 @@ def create_farmer_profile(
         business_name=request.business_name,
         location=request.location,
         user_id=current_user.id,
-        nin=request.nin,
+        nin=str(request.nin),
         bvn=request.bvn,
         bank_name=request.bank_name,
         account_number=request.account_number,

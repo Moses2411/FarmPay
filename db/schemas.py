@@ -50,7 +50,7 @@ class UserResponse(UserBase):
 class FarmerProfileBase(BaseModel):
     business_name: str
     location: str
-    nin: int
+    nin: str = Field(..., min_length=11, max_length=11, description="11-digit NIN")
     bvn: str = Field(..., min_length=11, max_length=11, description="11-digit BVN")
     bank_name: str
     account_number: str
@@ -230,7 +230,7 @@ class DisputeCreate(BaseModel):
 
 
 class DisputeResolve(BaseModel):
-    action: str  # "refund_buyer" or "release_farmer"
+    action: str  # "refund_buyer", "release_farmer", or "auto" (automatic decision)
 
 
 class CreateDisputeResponse(BaseModel):

@@ -3,12 +3,14 @@ routers/orders.py
 Order creation and status. OTP is hashed with bcrypt before storage.
 """
 
+import os
 import secrets
+import shutil
 import logging
 from datetime import datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from authentication.OAuth2 import get_current_user
@@ -16,6 +18,7 @@ from authentication.hashing import Hash
 from db.database import get_db
 from db.model import FarmerProfile, Notification, Order, OrderItem, Payment, Product, User
 from db.schemas import OrderCreate, OrderStatusResponse, FarmerOrder, FarmerOrderItem
+from services.disease_detector import analyze_image
 from services.mapbox_service import calculate_delivery_fee, geocode_address
 
 logger = logging.getLogger(__name__)
@@ -341,3 +344,51 @@ def get_order(
         raise HTTPException(403, "Access denied")
 
     return order
+
+
+@router.post("/scan-delivery/{order_id}")
+def scan_delivery_product(
+    order_id: UUID,
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Buyer scans the delivered product BEFORE confirming with OTP.
+    Returns scan result to help buyer decide: accept (give OTP) or dispute.
+    """
+    if current_user.role != "buyer":
+        raise HTTPException(403, "Only buyers can scan delivery")
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    if order.buyer_id != current_user.id:
+        raise HTTPException(403, "Not your order")
+
+    if order.payment_status != "paid":
+        raise HTTPException(400, "Order not paid yet")
+
+    if order.delivery_status in ["confirmed", "completed"]:
+        raise HTTPException(400, "Delivery already confirmed")
+
+    ext = image.filename.split(".")[-1] if "." in image.filename else "jpg"
+    file_name = f"{uuid4()}.{ext}"
+    file_path = os.path.join("uploads/delivery_scans", file_name)
+    os.makedirs("uploads/delivery_scans", exist_ok=True)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
+
+    result = analyze_image(file_path)
+
+    return {
+        "order_id": str(order.id),
+        "is_healthy": result.get("is_healthy", True),
+        "disease_name": result.get("name"),
+        "issue_type": result.get("issue_type"),
+        "recommendation": "Product appears healthy - you can confirm delivery with OTP" 
+                          if result.get("is_healthy") 
+                          else "Issues detected - consider raising a dispute",
+    }

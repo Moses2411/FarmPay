@@ -15,7 +15,8 @@ from authentication.OAuth2 import get_current_user
 from authentication.hashing import Hash
 from db.database import get_db
 from db.model import (
-    Dispute, FarmerProfile, Notification, Order, Payment, Product, User, UserRole
+    Dispute, DisputeImage, FarmerProfile, Notification, Order, OrderItem,
+    Payment, Product, ProductImage, ScanResult, User, UserRole
 )
 from db.schemas import DispatchRiderCreate, DisputeResolve, DisputeResponse
 
@@ -191,12 +192,15 @@ def resolve_dispute(
     - "refund_buyer"   → funds stay in Squad wallet, update records as refunded.
                          In production: call Squad refund API here if needed.
     - "release_farmer" → calls Transfer API to move money to farmer's bank.
+    - "auto"           → automatically compares dispute scan with original farmer scan:
+                         - If NEW disease/insect detected → refund buyer
+                         - Otherwise → release to farmer
     Both actions update DB state and send notifications.
     """
     from routers.payment import _release_escrow_to_farmer  # avoid circular import
 
-    if payload.action not in ("refund_buyer", "release_farmer"):
-        raise HTTPException(400, "action must be 'refund_buyer' or 'release_farmer'")
+    if payload.action not in ("refund_buyer", "release_farmer", "auto"):
+        raise HTTPException(400, "action must be 'refund_buyer', 'release_farmer', or 'auto'")
 
     dispute = db.query(Dispute).filter(Dispute.id == dispute_id).first()
     if not dispute:
@@ -214,9 +218,35 @@ def resolve_dispute(
     dispute.resolved_at = datetime.utcnow()
     dispute.admin_id = admin.id
 
-    if payload.action == "refund_buyer":
-        # Money stays in your Squad wallet — mark as refunded in DB
-        # TODO: for a real refund back to buyer's card, call Squad refund API here
+    final_action = payload.action
+
+    if payload.action == "auto":
+        order_items = db.query(OrderItem).filter(OrderItem.order_id == order.id).all()
+        original_diseases = set()
+        for item in order_items:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if product:
+                product_images = db.query(ProductImage).filter(
+                    ProductImage.product_id == product.id
+                ).all()
+                for img in product_images:
+                    scan = db.query(ScanResult).filter(ScanResult.image_id == img.id).first()
+                    if scan and scan.disease_name:
+                        original_diseases.add(scan.disease_name.lower())
+
+        dispute_images = db.query(DisputeImage).filter(DisputeImage.dispute_id == dispute.id).all()
+        new_issues_found = False
+        for dimg in dispute_images:
+            if dimg.disease_detected and dimg.disease_name:
+                disease_lower = dimg.disease_name.lower()
+                if disease_lower not in original_diseases:
+                    new_issues_found = True
+                    break
+
+        final_action = "refund_buyer" if new_issues_found else "release_farmer"
+        logger.info(f"[DISPUTE] Auto-resolve: original_diseases={original_diseases}, new_issues={new_issues_found} -> {final_action}")
+
+    if final_action == "refund_buyer":
         order.escrow_status = "refunded"
         order.status = "disputed"
         if payment:
@@ -234,9 +264,10 @@ def resolve_dispute(
         return {
             "message": "Dispute resolved. Buyer refund approved.",
             "order_id": str(order.id),
+            "decision": "auto" if payload.action == "auto" else "manual",
+            "reason": "New disease/insect detected not present at farmer upload" if payload.action == "auto" else None,
         }
 
-    # "release_farmer" — actually move the money
     dispute.status = "rejected"
     db.commit()
 
@@ -246,6 +277,8 @@ def resolve_dispute(
             "message": "Dispute rejected. Payment released to farmer.",
             "order_id": str(order.id),
             "payout": release_result,
+            "decision": "auto" if payload.action == "auto" else "manual",
+            "reason": "No new issues detected compared to original scan" if payload.action == "auto" else None,
         }
     except Exception as e:
         logger.error(f"[ADMIN] Payout failed during dispute resolution: {e}")
