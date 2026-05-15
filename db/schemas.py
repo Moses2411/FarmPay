@@ -5,10 +5,6 @@ from typing import Optional, List
 from enum import Enum
 
 
-# ============================================================
-# Helper Functions
-# ============================================================
-
 def kobo_to_naira(kobo: int) -> float:
     """Convert kobo to naira (e.g., 10000 -> 100.00)"""
     return round(kobo / 100, 2)
@@ -19,26 +15,12 @@ def naira_to_kobo(naira: float) -> int:
     return int(naira * 100)
 
 
-# ============================================================
-# Enums
-# ============================================================
-
 class UserRole(str, Enum):
     farmer = "farmer"
     buyer = "buyer"
     admin = "admin"
     dispatch_rider = "dispatch_rider"
 
-
-class Location(str, Enum):
-    kaduna_south = "kaduna_south"
-    kaduna_north = "kaduna_north"
-    kaduna_central = "kaduna_central"
-
-
-# ============================================================
-# User Schemas
-# ============================================================
 
 class UserBase(BaseModel):
     full_name: str
@@ -65,13 +47,9 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
-# ============================================================
-# Farmer Profile Schemas
-# ============================================================
-
 class FarmerProfileBase(BaseModel):
     business_name: str
-    location: Location
+    location: str
     nin: int
     bvn: str = Field(..., min_length=11, max_length=11, description="11-digit BVN")
     bank_name: str
@@ -86,7 +64,6 @@ class FarmerProfileResponse(BaseModel):
     nin: int
     bank_name: str
     account_number: str
-    # BVN intentionally excluded — never returned in responses
     created_at: datetime
     total_sales: float
     rating: float
@@ -106,10 +83,6 @@ class FarmerProfileSchema(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ============================================================
-# Product Schemas
-# ============================================================
 
 class ProductImageScanResult(BaseModel):
     disease_detected: bool
@@ -144,11 +117,6 @@ class ProductResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# ============================================================
-# Order Schemas
-# ============================================================
 
 class OrderItemCreate(BaseModel):
     product_id: UUID
@@ -216,10 +184,6 @@ class FarmerOrder(BaseModel):
         from_attributes = True
 
 
-# ============================================================
-# Payment Schemas
-# ============================================================
-
 class PaymentVerifyRequest(BaseModel):
     transaction_ref: str
 
@@ -248,11 +212,6 @@ class PaymentResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ============================================================
-# OTP Schemas
-# ============================================================
-
 class OTPVerifyRequest(BaseModel):
     order_id: UUID
     otp_code: str
@@ -264,10 +223,6 @@ class OTPVerifyResponse(BaseModel):
     delivery_status: str
     escrow_status: str
 
-
-# ============================================================
-# Dispute Schemas
-# ============================================================
 
 class DisputeCreate(BaseModel):
     order_id: UUID
@@ -307,11 +262,6 @@ class DisputeResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ============================================================
-# Admin Schemas
-# ============================================================
-
 class DispatchRiderCreate(BaseModel):
     full_name: str
     email: str
@@ -350,10 +300,6 @@ class EscrowReleaseResponse(BaseModel):
     payout_status: str
 
 
-# ============================================================
-# Review Schemas
-# ============================================================
-
 class CreateReviewRequest(BaseModel):
     product_id: UUID
     rating: int = Field(..., ge=1, le=5)
@@ -370,10 +316,6 @@ class ReviewResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ============================================================
-# Notification Schemas
-# ============================================================
 
 class NotificationResponse(BaseModel):
     id: UUID
