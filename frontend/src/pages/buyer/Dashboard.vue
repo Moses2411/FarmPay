@@ -244,7 +244,7 @@ const inEscrow = computed(() => {
       </div>
     </main>
 
-    <div v-if="isDisputeModalOpen" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#061209]/95 backdrop-blur-md">
+    <div v-if="isDisputeModalOpen" class="fixed inset-0 z-100 flex items-center justify-center p-4 bg-[#061209]/95 backdrop-blur-md">
       <div class="bg-[#0d2010] border border-white/10 w-full max-w-lg rounded-[3rem] p-8 shadow-2xl">
         
         <div class="flex justify-between items-center mb-8">
