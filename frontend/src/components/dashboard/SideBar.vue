@@ -14,7 +14,6 @@ const navItems = [
   { name: 'Orders', route: '/admin/orders', icon: ShoppingBag },
   { name: 'Disputes', route: '/admin/disputes', icon: AlertCircle },
   { name: 'All Users', route: '/admin/all_users', icon: Users },
-  { name: 'All Farmers', route: '/admin/all_farmers', icon: UserSquare2 },
   { name: 'All Payments', route: '/admin/all_payments', icon: Wallet },
   { name: 'Farmer Profiles', route: '/admin/all_farmer_profile', icon: UserSquare2 },
   { name: 'All Products', route: '/admin/all_products', icon: ShoppingBag },
@@ -27,7 +26,7 @@ const navItems = [
       <div class="w-8 h-8 bg-[#2d7a18] rounded-full flex items-center justify-center">
         <Wallet class="text-white" :size="16" />
       </div>
-      <span class="font-bold text-xl text-[#f0ede4]">FarmPay<span class="text-[#5cb83a]">.</span></span>
+      <span class="font-bold text-xl text-[#f0ede4]">FarmPay<span class="text-[#5cb83a]">.</span>ng</span>
     </div>
 
     <nav class="flex-1 px-4 space-y-1">
@@ -43,10 +42,5 @@ const navItems = [
       </router-link>
     </nav>
 
-    <div class="p-4 border-t border-white/5">
-      <div class="flex items-center gap-3 px-3 py-2 text-white/40 text-xs uppercase tracking-widest">
-        Admin Panel v1.0
-      </div>
-    </div>
   </aside>
 </template>
