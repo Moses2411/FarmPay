@@ -136,8 +136,9 @@ class Order(Base):
     escrow_status = Column(String, default="held")# held | released | refunded
     
 
-    # OTP — stored as bcrypt hash, never plaintext in DB
+    # OTP — stored as bcrypt hash for verification, plus plain code for display
     otp_hash = Column(String, nullable=True)
+    otp_code = Column(String, nullable=True)
     otp_expires_at = Column(DateTime, nullable=True)
     is_otp_verified = Column(Boolean, default=False)
 

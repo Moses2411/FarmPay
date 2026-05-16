@@ -153,6 +153,7 @@ class OrderStatusResponse(BaseModel):
     delivery_location: str
     dispatch_rider_id: Optional[UUID] = None
     is_otp_verified: bool
+    otp_code: Optional[str] = None
     created_at: datetime
     confirmed_at: Optional[datetime] = None
 

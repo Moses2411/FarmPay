@@ -103,6 +103,7 @@ def create_order(
         status="pending",
         payment_status="pending",
         otp_hash=otp_hash,
+        otp_code=plain_otp,
         otp_expires_at=datetime.utcnow() + timedelta(hours=48),
         delivery_status="pending",
         escrow_status="held",
