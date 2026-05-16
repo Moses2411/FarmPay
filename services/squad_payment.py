@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 SQUAD_SECRET_KEY = os.getenv("SQUAD_SECRET_KEY", "")
 SQUAD_BASE_URL = os.getenv("SQUAD_BASE_URL", "https://sandbox-api-d.squadco.com")
-SQUAD_CALLBACK_URL = os.getenv("SQUAD_CALLBACK_URL", "http://localhost:8000/payment-success")
+SQUAD_CALLBACK_URL = os.getenv("SQUAD_CALLBACK_URL", "https://farmpay-gold.vercel.app/payment-success")
 
 
 def generate_transaction_ref() -> str:
