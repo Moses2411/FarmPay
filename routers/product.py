@@ -4,13 +4,13 @@ from typing import List
 import shutil
 import os
 import uuid
-from uuid import UUID
 
 from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
 from db.schemas import ProductResponse, ProductImageSchema, ProductImageScanResult
 from authentication.OAuth2 import get_current_user
 from services.disease_detector import analyze_image, get_supported, SUPPORTED_CROPS
+from services.cloudinary_service import upload_image_to_cloudinary
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -21,7 +21,7 @@ ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
 MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
-def _save_image(image: UploadFile, upload_dir: str):
+def _save_image_locally(image: UploadFile, upload_dir: str):
     if not image.filename:
         raise HTTPException(400, "Invalid filename")
 
@@ -86,21 +86,34 @@ def upload_product(
     db.refresh(product)
 
     try:
-        file_path, file_name = _save_image(image, UPLOAD_DIR)
+        file_path, file_name = _save_image_locally(image, UPLOAD_DIR)
     except HTTPException:
         db.delete(product)
         db.commit()
         raise
 
+    image.file.seek(0)
+    try:
+        cloudinary_url = upload_image_to_cloudinary(image)
+    except Exception:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        db.delete(product)
+        db.commit()
+        raise HTTPException(500, "Failed to upload image to Cloudinary")
+
     product_image = ProductImage(
         product_id=product.id,
-        image_url=f"/uploads/{file_name}",
+        image_url=cloudinary_url,
     )
     db.add(product_image)
     db.commit()
     db.refresh(product_image)
 
     result = analyze_image(file_path, crop_type)
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
     scan = ScanResult(
         image_id=product_image.id,

@@ -17,6 +17,7 @@ from db.database import get_db
 from db.model import Dispute, DisputeImage, Order, User
 from db.schemas import CreateDisputeResponse
 from services.disease_detector import analyze_image
+from services.cloudinary_service import upload_image_to_cloudinary
 
 router = APIRouter(prefix="/disputes", tags=["Disputes"])
 
@@ -67,12 +68,21 @@ def create_dispute(
 
     result = analyze_image(file_path)
 
+    image.file.seek(0)
+    try:
+        cloudinary_url = upload_image_to_cloudinary(image)
+    except Exception:
+        cloudinary_url = file_path
+
     db.add(DisputeImage(
         dispute_id=dispute.id,
-        image_url=file_path,
+        image_url=cloudinary_url,
         disease_detected=not result.get("is_healthy", True),
         disease_name=result.get("name"),
     ))
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
     order.delivery_status = "disputed"
     db.commit()
