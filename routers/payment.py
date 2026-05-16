@@ -1,89 +1,38 @@
 """
 routers/payment.py
-Full payment lifecycle:
-  1. initiate  → Squad hosted checkout → money lands in YOUR Squad wallet
-  2. webhook   → Squad confirms payment → mark escrow "held"
-  3. verify    → buyer polls after checkout → server-side confirm
-  4. callback  → browser redirect after checkout
-  5. release   → OTP confirmed → Transfer API → money moves to farmer's bank
-
-Escrow model:
-  Money physically sits in YOUR Squad merchant wallet after the buyer pays.
-  It only moves to the farmer when release_escrow_to_farmer() calls payout/transfer.
-  Your DB escrow_status column tracks the STATE of that real money.
+Squad hosted checkout payment - Money lands in your Squad wallet, held in escrow until release
+Based on official Squad documentation
 """
 
-import logging
 import os
-from datetime import datetime
-from typing import Optional
+import json
+import logging
 from uuid import UUID
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
-from authentication.OAuth2 import get_current_user
 from db.database import get_db
-from db.model import FarmerProfile, Notification, Order, OrderItem, Payment, User
-from db.schemas import EscrowReleaseResponse, PaymentVerifyRequest
-from services.payout import release_funds_to_farmer
+from db.model import Order, Payment, User, Notification, FarmerProfile, OrderItem, Product
+from db.schemas import PaymentVerifyRequest, PaymentInitiateResponse
 from services.squad_payment import (
-    initiate_payment as squad_initiate,
-    verify_payment as squad_verify,
+    initiate_payment,
+    verify_payment,
     verify_webhook_signature,
+    get_wallet_balance,
 )
+from authentication.OAuth2 import get_current_user
 
 logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
-SQUAD_SECRET_KEY = os.getenv("SQUAD_SECRET_KEY", "")
 
-# ── Bank code lookup ──────────────────────────────────────────────────────────
-# Extend this dict with all banks your farmers use.
-# Source: https://docs.squadco.com or CBN NIP bank codes
-BANK_CODE_MAP = {
-    "access bank": "044",
-    "gtbank": "058",
-    "guaranty trust bank": "058",
-    "gt bank": "058",
-    "first bank": "011",
-    "uba": "033",
-    "united bank for africa": "033",
-    "zenith bank": "057",
-    "zenith": "057",
-    "polaris bank": "076",
-    "polaris": "076",
-    "fidelity bank": "070",
-    "fidelity": "070",
-    "stanbic ibtc": "068",
-    "stanbic": "068",
-    "union bank": "032",
-    "ecobank": "050",
-    "sterling bank": "232",
-    "sterling": "232",
-    "wema bank": "035",
-    "wema": "035",
-    "kuda": "090267",
-    "kuda bank": "090267",
-    "opay": "999992",
-    "palmpay": "999991",
-}
-
-
-def get_bank_code(bank_name: str) -> Optional[str]:
+def _confirm_payment(payment: Payment, order: Order, db: Session):
     """
-    Resolve bank name to NIP code.
-    Returns None if not found — caller must handle this.
-    """
-    return BANK_CODE_MAP.get(bank_name.strip().lower())
-
-
-# ── Internal escrow helpers ───────────────────────────────────────────────────
-
-def _confirm_payment(payment: Payment, order: Order, db: Session) -> None:
-    """
-    Mark payment and order as paid. Idempotent — safe to call multiple times.
-    Money is now in YOUR Squad merchant wallet (escrow).
+    Mark payment as confirmed - money is in Squad wallet (escrow)
+    This does NOT move money to farmer yet.
     """
     if payment.status == "paid":
         return
@@ -96,143 +45,25 @@ def _confirm_payment(payment: Payment, order: Order, db: Session) -> None:
     order.status = "paid"
     order.escrow_status = "held"
 
-    db.add(Notification(
+    notification = Notification(
         user_id=order.buyer_id,
         title="Payment Confirmed",
-        message=f"Your payment of ₦{float(payment.amount):,.2f} is confirmed and held in escrow.",
-    ))
-    db.commit()
-    logger.info(f"[PAYMENT] Confirmed: order={order.id} ref={payment.payment_reference}")
-
-
-def _release_escrow_to_farmer(order_id: UUID, db: Session) -> dict:
-    """
-    Core escrow release function.
-    Called by:
-      - /orders/verify-otp   (buyer confirms delivery via OTP)
-      - /admin/dispute/{id}/resolve  (admin rules in favour of farmer)
-
-    Steps:
-      1. Load order + payment + farmer profile
-      2. Validate state
-      3. Call Squad Transfer API (payout.py)
-      4. Update DB records
-      5. Send notifications
-    """
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        raise Exception(f"Order {order_id} not found")
-
-    payment = db.query(Payment).filter(Payment.order_id == order_id).first()
-    if not payment:
-        raise Exception(f"No payment record for order {order_id}")
-
-    if payment.escrow_status == "released":
-        logger.info(f"[ESCROW] Already released for order {order_id}")
-        return {
-            "message": "Already released",
-            "payout_reference": payment.payout_reference,
-            "payout_status": payment.payout_status,
-        }
-
-    if payment.status != "paid":
-        raise Exception(f"Cannot release unpaid order {order_id}")
-
-    # Find the farmer via order items
-    first_item = db.query(OrderItem).filter(OrderItem.order_id == order_id).first()
-    if not first_item:
-        raise Exception(f"No order items found for order {order_id}")
-
-    farmer_profile = db.query(FarmerProfile).filter(
-        FarmerProfile.user_id == first_item.product.farmer_id
-    ).first()
-    if not farmer_profile:
-        raise Exception("Farmer profile not found")
-
-    # Resolve bank code
-    bank_code = farmer_profile.settlement_bank_code
-    if not bank_code:
-        bank_code = get_bank_code(farmer_profile.bank_name)
-    if not bank_code:
-        raise Exception(
-            f"Cannot resolve bank code for '{farmer_profile.bank_name}'. "
-            "Ask farmer to update their bank details."
-        )
-
-    account_number = farmer_profile.settlement_account_number or farmer_profile.account_number
-    amount_to_release = float(payment.amount)
-    str_order_id = str(order_id)
-
-    # Mark payout as pending before calling Squad
-    payment.payout_status = "pending"
-    payment.payout_initiated_at = datetime.utcnow()
-    db.commit()
-
-    # Call Squad Transfer API
-    try:
-        result = release_funds_to_farmer(
-            farmer_account_number=account_number,
-            farmer_bank_code=bank_code,
-            farmer_name=farmer_profile.business_name or "Farmer",
-            amount_naira=amount_to_release,
-            order_id=str_order_id,
-        )
-    except Exception as e:
-        payment.payout_status = "failed"
-        db.commit()
-        raise Exception(f"Payout failed: {str(e)}")
-
-    # Update DB on success
-    payout_reference = result.get("transaction_reference", "")
-    payment.escrow_status = "released"
-    payment.released_at = datetime.utcnow()
-    payment.payout_reference = payout_reference
-    payment.payout_status = "success"
-
-    order.escrow_status = "released"
-    order.status = "completed"
-
-    # Deduct from farmer's tracked escrow balance
-    current_balance = float(farmer_profile.escrow_balance or 0)
-    farmer_profile.escrow_balance = max(0, current_balance - amount_to_release)
-    farmer_profile.total_sales = float(farmer_profile.total_sales or 0) + amount_to_release
-
-    # Notify farmer
-    db.add(Notification(
-        user_id=farmer_profile.user_id,
-        title="Payment Released",
-        message=(
-            f"₦{amount_to_release:,.2f} has been transferred to your bank account "
-            f"({account_number}). Order {str_order_id[:8]} complete."
-        ),
-    ))
-
-    db.commit()
-    logger.info(
-        f"[ESCROW] Released ₦{amount_to_release:,.2f} to farmer "
-        f"{farmer_profile.business_name} | ref: {payout_reference}"
+        message=f"Your payment of ₦{payment.amount:,.2f} has been confirmed. Funds are held in escrow until delivery.",
     )
-
-    return {
-        "message": "Escrow released",
-        "payout_reference": payout_reference,
-        "payout_status": "success",
-        "amount_released": amount_to_release,
-    }
+    db.add(notification)
+    db.commit()
+    logger.info(f"Payment confirmed for order {order.id}, escrow held")
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-
-@router.post("/initiate/{order_id}")
-def initiate_payment_endpoint(
+@router.post("/initiate/{order_id}", response_model=PaymentInitiateResponse)
+def initiate_order_payment(
     order_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Step 1: Create a Squad hosted checkout session.
-    Buyer is redirected to checkout_url to pay.
-    Money lands in YOUR Squad wallet on success.
+    Step 1: Buyer calls this to get Squad hosted checkout URL
+    Money will go into your Squad merchant wallet
     """
     if current_user.role != "buyer":
         raise HTTPException(403, "Only buyers can initiate payments")
@@ -248,19 +79,12 @@ def initiate_payment_endpoint(
     if order.payment_status == "paid":
         raise HTTPException(400, "Order already paid")
 
-    # Check for existing paid payment record
-    existing_paid = db.query(Payment).filter(
-        Payment.order_id == order.id,
-        Payment.status == "paid",
-    ).first()
-    if existing_paid:
-        raise HTTPException(400, "Payment already completed for this order")
-
-    # Re-use pending record if it exists
-    existing_pending = db.query(Payment).filter(Payment.order_id == order.id).first()
+    payment = db.query(Payment).filter(Payment.order_id == order.id).first()
+    if payment and payment.status == "paid":
+        raise HTTPException(400, "Payment already completed")
 
     try:
-        payment_info = squad_initiate(
+        payment_info = initiate_payment(
             amount_kobo=order.total_amount_kobo,
             buyer_email=current_user.email,
             buyer_name=current_user.full_name,
@@ -268,45 +92,41 @@ def initiate_payment_endpoint(
     except Exception as e:
         raise HTTPException(502, f"Could not reach Squad: {str(e)}")
 
-    if existing_pending:
-        existing_pending.payment_reference = payment_info["transaction_ref"]
-        existing_pending.payment_gateway = "squad"
-        existing_pending.status = "pending"
+    if payment:
+        payment.payment_reference = payment_info["transaction_ref"]
+        payment.payment_gateway = "squad"
+        payment.status = "pending"
     else:
-        db.add(Payment(
+        payment = Payment(
             order_id=order.id,
             payment_reference=payment_info["transaction_ref"],
             payment_gateway="squad",
-            amount=float(order.total_amount),
+            amount=order.total_amount,
             amount_kobo=order.total_amount_kobo,
             status="pending",
             escrow_status="held",
-        ))
+        )
+        db.add(payment)
 
     db.commit()
 
-    return {
-        "checkout_url": payment_info["checkout_url"],
-        "transaction_ref": payment_info["transaction_ref"],
-        "amount": float(order.total_amount),
-        "amount_kobo": order.total_amount_kobo,
-        "transaction_amount": payment_info["transaction_amount"],
-        "authorized_channels": payment_info["authorized_channels"],
-        "currency": payment_info["currency"],
-        "merchant_id": payment_info["merchant_id"],
-        "order_id": str(order.id),
-    }
+    return PaymentInitiateResponse(
+        checkout_url=payment_info["checkout_url"],
+        transaction_ref=payment_info["transaction_ref"],
+        amount=order.total_amount,
+        order_id=str(order.id),
+    )
 
 
 @router.post("/verify")
-def verify_payment_endpoint(
+def verify_order_payment(
     payload: PaymentVerifyRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Step 2: Buyer calls this after returning from Squad checkout.
-    Always verify server-side — never trust client status.
+    Step 2: Call this after customer completes checkout
+    OR Squad will call your webhook
     """
     payment = db.query(Payment).filter(
         Payment.payment_reference == payload.transaction_ref
@@ -317,7 +137,7 @@ def verify_payment_endpoint(
 
     if payment.status == "paid":
         return {
-            "message": "Payment already confirmed. Funds held in escrow.",
+            "message": "Payment already confirmed",
             "order_id": str(payment.order_id),
             "escrow_status": payment.escrow_status,
         }
@@ -327,189 +147,209 @@ def verify_payment_endpoint(
         raise HTTPException(404, "Order not found")
 
     try:
-        result = squad_verify(payload.transaction_ref)
+        result = verify_payment(payload.transaction_ref)
     except Exception as e:
         raise HTTPException(502, f"Could not reach Squad: {str(e)}")
 
-    if str(result.get("transaction_status", "")).strip().lower() == "success":
+    if not result.get("valid"):
+        payment.status = "failed"
+        order.payment_status = "failed"
+        db.commit()
+        raise HTTPException(400, f"Payment verification failed: {result.get('error')}")
+
+    if result.get("is_successful"):
         _confirm_payment(payment, order, db)
         return {
             "message": "Payment confirmed. Funds held in escrow until delivery.",
             "order_id": str(order.id),
-            "amount": float(payment.amount),
+            "amount": payment.amount,
             "escrow_status": payment.escrow_status,
         }
-
-    payment.status = "failed"
-    order.payment_status = "failed"
-    db.commit()
-
-    raise HTTPException(
-        400,
-        f"Payment not successful. Status: {result.get('transaction_status')}",
-    )
+    else:
+        payment.status = "failed"
+        order.payment_status = "failed"
+        db.commit()
+        raise HTTPException(400, f"Payment not successful. Status: {result.get('transaction_status')}")
 
 
-@router.post("/webhook/payment")
-async def payment_webhook(
-    request: Request,
-    db: Session = Depends(get_db),
-):
+@router.post("/webhook")
+async def payment_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Squad webhook — called when hosted checkout payment completes.
-    Also handles Dynamic VA events (mismatch, expired, completed).
-    Squad requires HTTP 200 always — even for events we don't handle.
+    Squad webhook for hosted checkout payments.
     """
     raw_body = await request.body()
     signature = request.headers.get("x-squad-encrypted-body", "")
 
-    if not verify_webhook_signature(raw_body, signature, SQUAD_SECRET_KEY):
-        logger.warning("[WEBHOOK] Invalid signature — rejecting")
-        # Still return 200 so Squad doesn't retry indefinitely
-        return Response(status_code=200, content="invalid signature")
+    # Verify webhook signature
+    if not verify_webhook_signature(raw_body, signature):
+        logger.warning("Invalid webhook signature - rejecting")
+        return Response(status_code=401, content="Invalid signature")
 
     try:
         payload = await request.json()
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to parse webhook JSON: {e}")
         return Response(status_code=200, content="bad json")
 
     event_type = payload.get("Event", "")
-    body = payload.get("Body", payload.get("data", {}))
+    logger.info(f"Webhook received - Event: {event_type}")
 
-    logger.info(f"[WEBHOOK] Event: {event_type}")
+    if event_type != "charge_successful":
+        logger.info(f"Ignoring event type: {event_type}")
+        return Response(status_code=200, content="event not handled")
 
-    # ── Dynamic VA events ─────────────────────────────────────────────────
-    if event_type in ("payment.mismatch", "payment.expired"):
-        # Squad auto-refunds these — just log and ack
-        logger.info(f"[WEBHOOK] {event_type} — Squad handles auto-refund")
-        return Response(status_code=200, content="ok")
+    body = payload.get("Body", {})
+    transaction_ref = body.get("transaction_ref", payload.get("TransactionRef", ""))
+    transaction_status = body.get("transaction_status", "")
 
-    # ── Hosted checkout payment ───────────────────────────────────────────
-    if event_type == "charge.completed":
-        transaction_ref = body.get("transaction_ref", "")
-        amount_kobo = body.get("amount", 0)
+    logger.info(f"Processing charge_successful for ref: {transaction_ref}, status: {transaction_status}")
 
-        payment = db.query(Payment).filter(
-            Payment.payment_reference == transaction_ref
-        ).first()
+    if str(transaction_status).strip().lower() != "success":
+        logger.info(f"Transaction not successful: {transaction_status}")
+        return Response(status_code=200, content="not success")
 
+    payment = db.query(Payment).filter(
+        Payment.payment_reference == transaction_ref
+    ).first()
+
+    if not payment:
+        logger.warning(f"No payment record found for ref: {transaction_ref}")
+        return Response(status_code=200, content="no payment found")
+
+    if payment.status == "paid":
+        logger.info(f"Payment already processed for ref: {transaction_ref}")
+        return Response(status_code=200, content="already processed")
+
+    order = db.query(Order).filter(Order.id == payment.order_id).first()
+    if order:
+        _confirm_payment(payment, order, db)
+        logger.info(f"Order {order.id} marked as paid via webhook")
+    else:
+        logger.error(f"Order not found for payment: {payment.order_id}")
+
+    return Response(status_code=200, content="ok")
+
+
+@router.post("/webhook/va-payment")
+async def va_payment_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Squad webhook for Virtual Account payments.
+    Also uses "charge_successful" event.
+    """
+    raw_body = await request.body()
+    signature = request.headers.get("x-squad-encrypted-body", "")
+
+    if not verify_webhook_signature(raw_body, signature):
+        logger.warning("Invalid VA webhook signature - rejecting")
+        return Response(status_code=401, content="Invalid signature")
+
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.error(f"Failed to parse VA webhook JSON: {e}")
+        return Response(status_code=200, content="bad json")
+
+    event_type = payload.get("Event", "")
+    logger.info(f"VA Webhook received - Event: {event_type}")
+
+    if event_type != "charge_successful":
+        return Response(status_code=200, content="event not handled")
+
+    body = payload.get("Body", {})
+    account_number = body.get("account_number", "")
+    amount_kobo = body.get("amount", 0)
+    amount_ngn = amount_kobo / 100
+    transaction_ref = body.get("transaction_ref", "")
+    customer_email = body.get("email", "")
+
+    logger.info(f"VA Payment: VA {account_number} received ₦{amount_ngn:,.2f}")
+
+    # Find farmer by virtual account number
+    farmer_profile = db.query(FarmerProfile).filter(
+        FarmerProfile.virtual_account_number == account_number
+    ).first()
+
+    if not farmer_profile:
+        logger.warning(f"No farmer found for VA: {account_number}")
+        return Response(status_code=200, content="no farmer found")
+
+    # Find buyer by email
+    buyer = db.query(User).filter(User.email == customer_email).first()
+
+    if not buyer:
+        logger.warning(f"No buyer found for email: {customer_email}")
+        farmer_profile.escrow_balance += amount_ngn
+        db.commit()
+        return Response(status_code=200, content="no buyer found")
+
+    # Find pending order - FIXED: removed double join
+    order = db.query(Order).filter(
+        Order.buyer_id == buyer.id,
+        Order.total_amount_kobo == amount_kobo,
+        Order.payment_status == "pending"
+    ).order_by(Order.created_at.desc()).first()
+
+    if order:
+        # Create or update payment record
+        payment = db.query(Payment).filter(Payment.order_id == order.id).first()
         if not payment:
-            logger.warning(f"[WEBHOOK] No payment found for ref: {transaction_ref}")
-            return Response(status_code=200, content="no match")
-
-        if payment.status == "paid":
-            return Response(status_code=200, content="already processed")
-
-        order = db.query(Order).filter(Order.id == payment.order_id).first()
-        if order:
-            _confirm_payment(payment, order, db)
-            logger.info(f"[WEBHOOK] Confirmed order {order.id} via webhook")
-
-        return Response(status_code=200, content="ok")
-
-    # ── VA payment.completed ──────────────────────────────────────────────
-    if event_type == "payment.completed":
-        account_number = body.get("account_number", "")
-        amount_kobo = int(body.get("principal_amount", body.get("amount", 0)))
-        transaction_ref = body.get("transaction_ref", body.get("transaction_reference", ""))
-
-        farmer_profile = db.query(FarmerProfile).filter(
-            FarmerProfile.virtual_account_number == account_number
-        ).first()
-
-        if not farmer_profile:
-            logger.warning(f"[WEBHOOK] No farmer for VA: {account_number}")
-            return Response(status_code=200, content="no farmer")
-
-        # Match order by kobo amount + farmer + pending status
-        # We match on kobo (integer) — no float equality risk
-        pending_orders = (
-            db.query(Order)
-            .join(OrderItem)
-            .join(Order.items)
-            .filter(
-                Order.payment_status == "pending",
-                Order.total_amount_kobo == amount_kobo,
+            payment = Payment(
+                order_id=order.id,
+                payment_reference=transaction_ref,
+                payment_gateway="squad_va",
+                amount=amount_ngn,
+                amount_kobo=amount_kobo,
+                status="paid",
+                escrow_status="held",
+                paid_at=datetime.utcnow(),
             )
-            .order_by(Order.created_at.desc())
-            .all()
-        )
-
-        # Find an order whose items belong to this farmer
-        matched_order = None
-        for o in pending_orders:
-            for item in o.items:
-                if str(item.product.farmer_id) == str(farmer_profile.user_id):
-                    matched_order = o
-                    break
-            if matched_order:
-                break
-
-        if matched_order:
-            payment = db.query(Payment).filter(Payment.order_id == matched_order.id).first()
-            if not payment:
-                payment = Payment(
-                    order_id=matched_order.id,
-                    payment_reference=transaction_ref,
-                    payment_gateway="squad_va",
-                    amount=amount_kobo / 100,
-                    amount_kobo=amount_kobo,
-                    status="paid",
-                    escrow_status="held",
-                    paid_at=datetime.utcnow(),
-                )
-                db.add(payment)
-            else:
-                payment.status = "paid"
-                payment.paid_at = datetime.utcnow()
-                payment.payment_reference = transaction_ref
-                payment.amount_kobo = amount_kobo
-
-            matched_order.payment_status = "paid"
-            matched_order.status = "paid"
-            matched_order.escrow_status = "held"
-
-            # Track in farmer's escrow balance
-            farmer_profile.escrow_balance = float(farmer_profile.escrow_balance or 0) + (amount_kobo / 100)
-
-            db.add(Notification(
-                user_id=matched_order.buyer_id,
-                title="Payment Confirmed",
-                message=f"Your payment of ₦{amount_kobo / 100:,.2f} is confirmed and held in escrow.",
-            ))
-            db.add(Notification(
-                user_id=farmer_profile.user_id,
-                title="Payment Received",
-                message=f"₦{amount_kobo / 100:,.2f} received and held in escrow pending delivery.",
-            ))
-
-            db.commit()
-            logger.info(f"[WEBHOOK] VA payment matched to order {matched_order.id}")
+            db.add(payment)
         else:
-            # Unmatched payment — add to farmer balance for reconciliation
-            farmer_profile.escrow_balance = float(farmer_profile.escrow_balance or 0) + (amount_kobo / 100)
-            db.commit()
-            logger.warning(
-                f"[WEBHOOK] Unmatched VA payment: ₦{amount_kobo / 100} for {account_number} "
-                f"— added to escrow balance for manual reconciliation"
-            )
+            payment.status = "paid"
+            payment.paid_at = datetime.utcnow()
+            payment.payment_reference = transaction_ref
 
-        return Response(status_code=200, content="ok")
+        order.payment_status = "paid"
+        order.status = "paid"
+        order.escrow_status = "held"
 
-    return Response(status_code=200, content="event not handled")
+        farmer_profile.escrow_balance += amount_ngn
+
+        db.commit()
+        logger.info(f"Order {order.id} paid via VA. ₦{amount_ngn} in escrow")
+
+        # Create notification for buyer
+        buyer_notification = Notification(
+            user_id=buyer.id,
+            title="Payment Successful",
+            message=f"Your payment of ₦{amount_ngn:,.2f} for order {str(order.id)[:8]} has been confirmed. Funds are held in escrow."
+        )
+        db.add(buyer_notification)
+
+        farmer_notification = Notification(
+            user_id=farmer_profile.user_id,
+            title="Payment Received",
+            message=f"Payment of ₦{amount_ngn:,.2f} for order {str(order.id)[:8]} has been received and held in escrow pending delivery confirmation."
+        )
+        db.add(farmer_notification)
+        db.commit()
+    else:
+        # No matching order - add to escrow balance
+        farmer_profile.escrow_balance += amount_ngn
+        db.commit()
+        logger.info(f"Added ₦{amount_ngn} to escrow balance for {farmer_profile.business_name} (no matching order)")
+
+    return Response(status_code=200, content="ok")
 
 
 @router.get("/callback")
-def squad_callback(
-    transaction_ref: Optional[str] = None,
+def payment_callback(
+    transaction_ref: str = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Browser redirect target after Squad checkout.
-    Verifies and confirms payment. Frontend polls this or /payments/verify.
-    """
+    """Browser redirect after checkout - frontend should call /verify"""
     if not transaction_ref:
-        return {"message": "No transaction reference provided"}
+        return {"message": "No transaction reference"}
 
     payment = db.query(Payment).filter(
         Payment.payment_reference == transaction_ref
@@ -523,28 +363,47 @@ def squad_callback(
             "message": "Payment confirmed",
             "order_id": str(payment.order_id),
             "status": "paid",
-            "escrow_status": payment.escrow_status,
+            "escrow_status": "held",
         }
 
+    # Try to verify the payment
     try:
-        result = squad_verify(transaction_ref)
-        transaction_status = result.get("transaction_status", "")
+        result = verify_payment(transaction_ref)
+        if result.get("is_successful"):
+            order = db.query(Order).filter(Order.id == payment.order_id).first()
+            if order:
+                _confirm_payment(payment, order, db)
+            return {
+                "message": "Payment confirmed",
+                "order_id": str(payment.order_id),
+                "status": "paid",
+                "escrow_status": "held",
+            }
     except Exception:
-        transaction_status = ""
-
-    if str(transaction_status).strip().lower() == "success":
-        order = db.query(Order).filter(Order.id == payment.order_id).first()
-        if order:
-            _confirm_payment(payment, order, db)
-        return {
-            "message": "Payment confirmed",
-            "order_id": str(payment.order_id),
-            "status": "paid",
-            "escrow_status": payment.escrow_status,
-        }
+        pass
 
     return {
-        "message": "Payment not yet confirmed",
+        "message": "Payment pending. Please check status via /payments/verify",
+        "order_id": str(payment.order_id),
         "transaction_ref": transaction_ref,
-        "hint": "Complete payment on checkout page, then call POST /payments/verify",
     }
+
+
+@router.get("/balance")
+def get_balance(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get Squad wallet balance (admin only)"""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin access required")
+
+    try:
+        balance = get_wallet_balance()
+        return {
+            "balance_naira": balance["balance_naira"],
+            "balance_kobo": balance["balance_kobo"],
+            "currency": balance["currency"],
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Failed to get balance: {str(e)}")
