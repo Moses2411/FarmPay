@@ -111,7 +111,7 @@ const onLogin = handleSubmit(async (values) => {
           <div class="w-8 h-8 bg-[#2d7a18] rounded-full flex items-center justify-center text-white">
             <Wallet :size="16" />
           </div>
-          <span class="font-serif text-xl font-semibold tracking-tight">FarmPay<span class="text-[#5cb83a]">.</span>ng</span>
+          <span class="text-xl font-semibold tracking-tight">FarmPay<span class="text-[#5cb83a]">.</span>ng</span>
         </router-link>
 
         <h2 class="font-serif text-5xl leading-tight mb-8">
