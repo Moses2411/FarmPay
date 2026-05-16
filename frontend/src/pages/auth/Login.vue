@@ -89,6 +89,11 @@ const onLogin = handleSubmit(async (values) => {
       return router.push({ name: 'BuyerDashboard' });
     }
 
+    if (role === 'rider') {
+      // Ensure this route is defined in your router to avoid warnings
+      return router.push({ name: 'RiderDashboard' });
+    }
+
     if (role === 'admin') {
       // Ensure this route is defined in your router to avoid warnings
       return router.push({ name: 'AdminRiders' });

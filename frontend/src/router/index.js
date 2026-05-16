@@ -67,6 +67,12 @@ const routes = [
     name: "Marketplace",
     component: () => import("../pages/shared/Marketplace.vue"),
   },
+  {
+    path: "/payment-success",
+    name: "payment-success",
+    component: () => import("../pages/shared/PaymentSuccess.vue"),
+    meta: { requiresAuth: true },
+  },
 ];
 
 const router = createRouter({

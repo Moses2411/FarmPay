@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '../../stores/auth';
+import router from '../../router';
 import api from '@/api/api'; 
 import { 
   LayoutDashboard, 
@@ -10,6 +11,7 @@ import {
   History, 
   Settings, 
   LogOut, 
+  ShoppingBag,
   ShieldAlert,
   TrendingUp,
   CheckCircle2,
@@ -35,32 +37,31 @@ const stats = ref([
 
 const recentOrders = ref([]);
 const isAddModalOpen = ref(false);
-
 const fetchFarmerData = async () => {
   try {
-    // 2. Fetch data directly from backend
-    const { data: orders } = await api.get('/orders/my-orders'); 
+    // Note the endpoint change to /orders/farmer-orders based on your image
+    const { data: orders } = await api.get('/orders/farmer-orders'); 
+    console.log(orders);
     
-    // 3. Map orders to match the table's expected keys
+    // Map the new keys: order_id, buyer_name, etc.
     recentOrders.value = orders.slice(0, 5).map(order => ({
-      id: `#${order.id.slice(0, 8)}`,
-      item: order.product_name || 'Produce',
+      id: order.order_id,
+      buyer: order.buyer_name,
       price: `₦${(order.total_amount || 0).toLocaleString()}`,
-      status: order.status
+      status: order.status,
+      // Grabbing the first item's name if items array exists
+      produce: order.items?.[0]?.product?.name || 'Farm Produce'
     }));
 
-    // 4. Update the reactive Stats values
-    const totalRevenue = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+    // Update Stats
+    const totalRevenue = orders.reduce((sum, o) => sum + (o.total_amount || 0), 0);
     stats.value[0].value = `₦${totalRevenue.toLocaleString()}`;
     
-    const pendingCount = orders.filter(o => o.status === 'pending' || o.status === 'in_escrow').length;
+    const pendingCount = orders.filter(o => o.delivery_status === 'pending').length;
     stats.value[2].value = pendingCount.toString();
 
-    // Note: If you have a separate endpoint for active listings, you'd fetch that here
-    // stats.value[1].value = orders.length.toString(); 
-
   } catch (err) {
-    console.warn("Backend fetch failed. Check your token or network connection.");
+    console.warn("Farmer data fetch failed.");
   }
 };
 
@@ -86,6 +87,9 @@ onMounted(fetchFarmerData);
       <nav class="flex-1 px-4 space-y-2 mt-4">
         <router-link to="/farmer" class="flex items-center gap-3 px-4 py-3 rounded-xl bg-[#5cb83a]/10 text-[#5cb83a] font-bold">
           <LayoutDashboard :size="20" /> Dashboard
+        </router-link>
+        <router-link to="/marketplace" class="flex items-center gap-3 px-4 py-3 rounded-xl text-white/40 hover:bg-white/5 hover:text-white transition-all">
+          <ShoppingBag :size="20" /> Market View
         </router-link>
         <router-link to="/farmer/inventory" class="flex items-center gap-3 px-4 py-3 rounded-xl text-white/40 hover:bg-white/5 hover:text-white transition-all">
           <Package :size="20" /> My Harvest
@@ -113,6 +117,9 @@ onMounted(fetchFarmerData);
           <p class="text-xl font-serif">{{ userName }}</p>
         </div>
         <div class="flex items-center gap-4">
+          <button @click="router.push('/marketplace')" class="hidden lg:flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all cursor-pointer">
+             <ShoppingBag :size="14" /> Market View
+          </button>
           <div v-if="isVerified" class="flex items-center gap-2 px-3 py-1 bg-[#5cb83a]/10 border border-[#5cb83a]/20 rounded-full text-[#5cb83a] text-[10px] font-bold uppercase">
             <CheckCircle2 :size="12" /> Verified Farmer
           </div>
@@ -161,26 +168,38 @@ onMounted(fetchFarmerData);
             </div>
             <div class="p-0">
               <table class="w-full text-left">
-                <thead class="text-[10px] uppercase text-white/20 font-bold border-b border-white/5">
-                  <tr>
-                    <th class="px-6 py-4">Order ID</th>
-                    <th class="px-6 py-4">Produce</th>
-                    <th class="px-6 py-4">Amount</th>
-                    <th class="px-6 py-4 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody class="text-sm">
-                  <tr v-for="order in recentOrders" :key="order.id" class="border-b border-white/5 hover:bg-white/5 transition-colors">
-                    <td class="px-6 py-4 font-mono text-xs text-white/60">{{ order.id }}</td>
-                    <td class="px-6 py-4 font-medium">{{ order.item }}</td>
-                    <td class="px-6 py-4">{{ order.price }}</td>
-                    <td class="px-6 py-4 text-right">
-                      <button class="p-2 hover:bg-white/10 rounded-lg transition-all">
-                        <ChevronRight :size="16" />
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
+       <table class="w-full text-left">
+  <thead class="text-[10px] uppercase text-white/20 font-bold border-b border-white/5">
+    <tr>
+      <th class="px-6 py-4">Buyer</th>
+      <th class="px-6 py-4">Produce</th>
+      <th class="px-6 py-4">Amount</th>
+      <th class="px-6 py-4">Status</th>
+      <th class="px-6 py-4 text-right">Action</th>
+    </tr>
+  </thead>
+  <tbody class="text-sm">
+    <tr v-for="order in recentOrders" :key="order.id" class="border-b border-white/5 hover:bg-white/5 transition-colors">
+      <td class="px-6 py-4">
+        <p class="font-bold text-white/80">{{ order.buyer }}</p>
+        <p class="text-[10px] font-mono text-white/20">#{{ order.id.slice(-6) }}</p>
+      </td>
+      <td class="px-6 py-4 font-medium">{{ order.produce }}</td>
+      <td class="px-6 py-4 text-[#5cb83a] font-bold">{{ order.price }}</td>
+      <td class="px-6 py-4">
+        <span class="px-2 py-1 rounded-md text-[9px] font-bold uppercase tracking-tighter"
+          :class="order.status === 'completed' ? 'bg-[#5cb83a]/10 text-[#5cb83a]' : 'bg-amber-500/10 text-amber-500'">
+          {{ order.status }}
+        </span>
+      </td>
+      <td class="px-6 py-4 text-right">
+        <button class="p-2 hover:bg-white/10 rounded-lg transition-all cursor-pointer">
+          <ChevronRight :size="16" />
+        </button>
+      </td>
+    </tr>
+  </tbody>
+</table>
               </table>
             </div>
           </div>
