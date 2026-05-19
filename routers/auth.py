@@ -198,3 +198,65 @@ def get_farmer_profile(
         raise HTTPException(404, "Profile not found")
 
     return profile
+
+
+@router.get("/payouts")
+def get_farmer_payouts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get farmer payouts, escrow balance, and transaction history"""
+    if current_user.role != UserRole.farmer:
+        raise HTTPException(403, "Only farmers can access this endpoint")
+
+    profile = db.query(FarmerProfile).filter(FarmerProfile.user_id == current_user.id).first()
+    if not profile:
+        raise HTTPException(404, "Profile not found")
+
+    from db.model import Order, OrderItem, Payment, Product
+
+    completed_orders = db.query(Order).join(OrderItem).join(Product).filter(
+        Product.farmer_id == current_user.id,
+        Order.escrow_status == "released"
+    ).all()
+
+    pending_orders = db.query(Order).join(OrderItem).join(Product).filter(
+        Product.farmer_id == current_user.id,
+        Order.escrow_status == "held"
+    ).all()
+
+    transactions = []
+    total_earnings = 0.0
+
+    for order in completed_orders:
+        transactions.append({
+            "id": str(order.id),
+            "amount": float(order.total_amount),
+            "type": "released",
+            "date": order.released_at.isoformat() if order.released_at else order.updated_at.isoformat(),
+            "order_id": str(order.id),
+            "status": "completed"
+        })
+        total_earnings += float(order.total_amount)
+
+    for order in pending_orders:
+        transactions.append({
+            "id": str(order.id),
+            "amount": float(order.total_amount),
+            "type": "escrow",
+            "date": order.created_at.isoformat(),
+            "order_id": str(order.id),
+            "status": "pending"
+        })
+
+    transactions.sort(key=lambda x: x["date"], reverse=True)
+
+    return {
+        "total_earnings": total_earnings,
+        "escrow_balance": float(profile.escrow_balance) if profile.escrow_balance else 0.0,
+        "total_sales": float(profile.total_sales) if profile.total_sales else 0.0,
+        "bank_name": profile.bank_name,
+        "account_number": profile.account_number,
+        "virtual_account_number": profile.virtual_account_number,
+        "transactions": transactions[:20]
+    }

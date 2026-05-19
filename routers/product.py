@@ -4,6 +4,7 @@ from typing import List
 import shutil
 import os
 import uuid
+from uuid import UUID
 
 from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
