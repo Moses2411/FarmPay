@@ -1,29 +1,28 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List
 import shutil
 import os
 import uuid
 from uuid import UUID
-from core.config import settings
 
 from db.database import get_db
 from db.model import Product, ProductImage, ScanResult, User, FarmerProfile
 from db.schemas import ProductResponse, ProductImageSchema, ProductImageScanResult
 from authentication.OAuth2 import get_current_user
-from services.disease_detector import analyze_image, get_supported
+from services.disease_detector import analyze_image, get_supported, SUPPORTED_CROPS
+from services.cloudinary_service import upload_image_to_cloudinary
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
-UPLOAD_DIR = getattr(settings, 'UPLOAD_DIR', 'uploads')
+UPLOAD_DIR = "/var/data/uploads" if os.path.exists("/var/data") else "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+MAX_FILE_SIZE = 5 * 1024 * 1024
 
 
-def _save_image(image: UploadFile, upload_dir: str) -> str:
+def _save_image_locally(image: UploadFile, upload_dir: str):
     if not image.filename:
         raise HTTPException(400, "Invalid filename")
 
@@ -31,15 +30,15 @@ def _save_image(image: UploadFile, upload_dir: str) -> str:
     if file_ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"File type not allowed. Use: {ALLOWED_EXTENSIONS}")
 
-    file_name = f"{uuid.uuid4()}.{file_ext}"
-    file_path = os.path.join(upload_dir, file_name)
-
     image.file.seek(0, 2)
     size = image.file.tell()
     image.file.seek(0)
 
     if size > MAX_FILE_SIZE:
         raise HTTPException(400, "File too large. Max 5MB")
+
+    file_name = f"{uuid.uuid4()}.{file_ext}"
+    file_path = os.path.join(upload_dir, file_name)
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(image.file, buffer)
@@ -54,18 +53,24 @@ def upload_product(
     price: float = Form(...),
     available_quantity: int = Form(...),
     unit: str = Form(...),
-    crop_type: str = Form("auto", description="Crop type: auto, cassava, yam, rice, maize, tomato, pepper, okra, melon, etc."),
-    image: UploadFile = File(..., description="Upload product image"),
-
+    crop_type: str = Form("auto"),
+    image: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     if current_user.role != "farmer":
-        raise HTTPException(status_code=403, detail="Only farmers can upload products")
+        raise HTTPException(403, "Only farmers can upload products")
 
     valid = db.query(FarmerProfile).filter(FarmerProfile.user_id == current_user.id).first()
     if not valid:
-        raise HTTPException(status_code = 403, detail = "You dont yet have a market place profile")
+        raise HTTPException(403, "You dont yet have a market place profile")
+
+    if crop_type != "auto":
+        if crop_type.lower() not in SUPPORTED_CROPS:
+            raise HTTPException(
+                400,
+                f"Crop not supported. Allowed: {', '.join(SUPPORTED_CROPS)}"
+            )
 
     product = Product(
         farmer_id=current_user.id,
@@ -75,23 +80,32 @@ def upload_product(
         available_quantity=available_quantity,
         unit=unit,
         scan_status="pending",
-        is_approved=False
+        is_approved=False,
     )
-
     db.add(product)
     db.commit()
     db.refresh(product)
 
     try:
-        file_path, file_name = _save_image(image, UPLOAD_DIR)
+        file_path, file_name = _save_image_locally(image, UPLOAD_DIR)
     except HTTPException:
         db.delete(product)
         db.commit()
         raise
 
+    image.file.seek(0)
+    try:
+        cloudinary_url = upload_image_to_cloudinary(image)
+    except Exception:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        db.delete(product)
+        db.commit()
+        raise HTTPException(500, "Failed to upload image to Cloudinary")
+
     product_image = ProductImage(
         product_id=product.id,
-        image_url=f"/uploads/{file_name}"
+        image_url=cloudinary_url,
     )
     db.add(product_image)
     db.commit()
@@ -99,21 +113,8 @@ def upload_product(
 
     result = analyze_image(file_path, crop_type)
 
-    target_crop = name.lower().strip()
-    detected_crop = result.get("detected_crop", "").lower().strip()
-    provided_crop = crop_type.lower().strip() if crop_type and crop_type != "auto" else None
-
-    if provided_crop and provided_crop != "auto":
-        pass
-    elif detected_crop and detected_crop != "unknown" and detected_crop != target_crop:
+    if os.path.exists(file_path):
         os.remove(file_path)
-        db.delete(product_image)
-        db.delete(product)
-        db.commit()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Image mismatch: uploaded '{target_crop}' but detected '{detected_crop}'. Please upload image of {target_crop}."
-        )
 
     scan = ScanResult(
         image_id=product_image.id,
@@ -122,7 +123,6 @@ def upload_product(
         status="scanned",
     )
     db.add(scan)
-    db.commit()
 
     product.scan_status = "scanned"
     product.is_approved = True
@@ -135,42 +135,49 @@ def upload_product(
         "is_approved": product.is_approved,
         "product_id": str(product.id),
         "image_url": product_image.image_url,
-        "crop_type": result["crop_type"],
-        "issue_type": result["issue_type"],
-        "name": result["name"],
-        "treatment": result["treatment"],
+        "crop_type": result.get("crop_type"),
+        "issue_type": result.get("issue_type"),
+        "name": result.get("name"),
+        "treatment": result.get("treatment"),
     }
 
 
-@router.get('/all', response_model=List[ProductResponse])
+@router.get("/all", response_model=List[ProductResponse])
 def get_verified_products(db: Session = Depends(get_db)):
-    products = db.query(Product).filter(
+    from sqlalchemy.orm import joinedload
+    return db.query(Product).options(
+        joinedload(Product.images).joinedload(ProductImage.scan_result),
+        joinedload(Product.farmer).joinedload(User.farmer_profile)
+    ).filter(
         Product.scan_status == "scanned",
-        Product.is_approved == True
+        Product.is_approved == True,
     ).all()
-    return products
 
 
-@router.get('/specific/{product_id}')
+@router.get("/specific/{product_id}")
 def get_single_product(product_id: UUID, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_approved == True).first()
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.is_approved == True,
+    ).first()
     if not product:
-        raise HTTPException(status_code = 404, detail = 'Product not found')
+        raise HTTPException(404, "Product not found")
     return product
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def delete_product(
+    product_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     product = db.query(Product).filter(Product.id == product_id).first()
-
     if not product:
         raise HTTPException(404, "Product not found")
-
     if product.farmer_id != current_user.id:
-        raise HTTPException(403, "Not authorized to delete this product")
-
+        raise HTTPException(403, "Not authorized")
     if product.order_items:
-        raise HTTPException(status_code = 400, detail = "ordered item cannot be deleted")
+        raise HTTPException(400, "Ordered item cannot be deleted")
 
     for img in product.images:
         img_path = os.path.join(UPLOAD_DIR, os.path.basename(img.image_url))
@@ -179,43 +186,12 @@ def delete_product(product_id: UUID, db: Session = Depends(get_db), current_user
 
     db.delete(product)
     db.commit()
-
     return {"message": "Product deleted successfully"}
 
 
-@router.get("/my-products", response_model = List[ProductResponse])
+@router.get("/my-products", response_model=List[ProductResponse])
 def get_my_products(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    products = db.query(Product).filter(Product.farmer_id == current_user.id).all()
-    return products
-
-@router.get('/specific{product_id}')
-def get_single_product(product_id: UUID, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id, Product.is_approved == True).first()
-    if not product:
-        raise HTTPException(status_code = 404, detail = 'Product not found')
-    return product
-
-@router.delete("/{product_id}")
-def delete_product(product_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    product = db.query(Product).filter(Product.id == product_id).first()
-
-    if not product:
-        raise HTTPException(404, "Product not found")
-
-    if product.farmer_id != current_user.id:
-        raise HTTPException(403, "Not authorized to delete this product")
-    
-    if product.order_items:
-        raise HTTPException(status_code = 400, detail = "odered item cannot be deleted")
-
-    db.delete(product)
-    db.commit()
-
-    return {"message": "Product deleted successfully"}
-
-@router.get("/my-products", response_model = List[ProductResponse] )
-def get_my_products(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    products = db.query(Product).filter(Product.farmer_id == current_user.id).all()
-    return products
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return db.query(Product).filter(Product.farmer_id == current_user.id).all()

@@ -5,20 +5,22 @@ from typing import Optional, List
 from enum import Enum
 
 
+def kobo_to_naira(kobo: int) -> float:
+    """Convert kobo to naira (e.g., 10000 -> 100.00)"""
+    return round(kobo / 100, 2)
+
+
+def naira_to_kobo(naira: float) -> int:
+    """Convert naira to kobo (e.g., 100.00 -> 10000)"""
+    return int(naira * 100)
+
+
 class UserRole(str, Enum):
     farmer = "farmer"
     buyer = "buyer"
     admin = "admin"
     dispatch_rider = "dispatch_rider"
 
-
-class Location(str, Enum):
-    kaduna_south = "kaduna_south"
-    kaduna_north = "kaduna_north"
-    kaduna_central = "kaduna_central"
-
-
-# ── User ──────────────────────────────────────────────────
 
 class UserBase(BaseModel):
     full_name: str
@@ -45,22 +47,29 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
-# ── Farmer profile ────────────────────────────────────────
-
 class FarmerProfileBase(BaseModel):
     business_name: str
-    location: Location
-    nin: int
+    location: str
+    nin: str = Field(..., min_length=11, max_length=11, description="11-digit NIN")
+    bvn: str = Field(..., min_length=11, max_length=11, description="11-digit BVN")
     bank_name: str
     account_number: str
 
 
-class FarmerProfileResponse(FarmerProfileBase):
+class FarmerProfileResponse(BaseModel):
     id: UUID
     user_id: UUID
+    business_name: Optional[str] = None
+    location: str
+    nin: int
+    bank_name: str
+    account_number: str
     created_at: datetime
     total_sales: float
     rating: float
+    virtual_account_number: Optional[str] = None
+    virtual_account_bank_name: Optional[str] = None
+    escrow_balance: float = 0.0
 
     class Config:
         from_attributes = True
@@ -75,12 +84,11 @@ class FarmerProfileSchema(BaseModel):
         from_attributes = True
 
 
-# ── Product ───────────────────────────────────────────────
-
 class ProductImageScanResult(BaseModel):
     disease_detected: bool
     disease_name: Optional[str] = None
     status: str
+    confidence: float = 0.0
 
     class Config:
         from_attributes = True
@@ -110,9 +118,6 @@ class ProductResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── Order ─────────────────────────────────────────────────
-
 class OrderItemCreate(BaseModel):
     product_id: UUID
     quantity: int
@@ -120,7 +125,8 @@ class OrderItemCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
-    delivery_location: Location
+    delivery_address: str
+    buyer_address: Optional[str] = None
 
 
 class OrderResponse(BaseModel):
@@ -147,16 +153,54 @@ class OrderStatusResponse(BaseModel):
     delivery_location: str
     dispatch_rider_id: Optional[UUID] = None
     is_otp_verified: bool
+    otp_code: Optional[str] = None
     created_at: datetime
+    confirmed_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
 
 
-# ── Payment ───────────────────────────────────────────────
+class FarmerOrderItem(BaseModel):
+    product_id: UUID
+    product_name: str
+    quantity: int
+    price: float
+
+
+class FarmerOrder(BaseModel):
+    order_id: UUID
+    buyer_name: str
+    buyer_phone: str
+    delivery_address: str
+    delivery_fee: float
+    total_amount: float
+    status: str
+    payment_status: str
+    delivery_status: str
+    created_at: datetime
+    items: List[FarmerOrderItem] = []
+
+    class Config:
+        from_attributes = True
+
 
 class PaymentVerifyRequest(BaseModel):
     transaction_ref: str
+
+
+class PaymentInitiateResponse(BaseModel):
+    checkout_url: str
+    transaction_ref: str
+    amount: float
+    order_id: str
+
+
+class PaymentVerifyResponse(BaseModel):
+    message: str
+    order_id: str
+    amount: float
+    escrow_status: str
 
 
 class PaymentResponse(BaseModel):
@@ -169,23 +213,31 @@ class PaymentResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-# ── OTP ───────────────────────────────────────────────────
-
 class OTPVerifyRequest(BaseModel):
     order_id: UUID
     otp_code: str
 
 
-# ── Dispute ───────────────────────────────────────────────
+class OTPVerifyResponse(BaseModel):
+    message: str
+    order_id: str
+    delivery_status: str
+    escrow_status: str
+
 
 class DisputeCreate(BaseModel):
     order_id: UUID
     reason: str
 
 
+class OrderAssign(BaseModel):
+    rider_id: UUID
+    rider_status: str  # "available" or "busy"
+
+
 class DisputeResolve(BaseModel):
-    action: str  # "refund_buyer" or "release_farmer"
+    action: str  # "refund_buyer", "release_farmer", or "auto" (automatic decision)
+
 
 class CreateDisputeResponse(BaseModel):
     message: str
@@ -209,21 +261,52 @@ class DisputeResponse(BaseModel):
     order_id: UUID
     reason: Optional[str]
     status: str
-    images: List[DisputeImageResponse]
+    images: List[DisputeImageResponse] = []
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class DispatchRiderCreate(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    phone_number: str
+    status: str = "Available"
+
+
+class DispatchRiderResponse(BaseModel):
+    id: UUID
+    full_name: str
+    email: str
+    phone_number: str
+    is_verified: bool
+    created_at: datetime
+    status: str
 
     class Config:
         from_attributes = True
 
 
-# ── Admin ─────────────────────────────────────────────────
+class EscrowSummary(BaseModel):
+    """Escrow summary for admin dashboard"""
+    total_held_naira: float = 0.0
+    total_released_naira: float = 0.0
+    total_refunded_naira: float = 0.0
+    held_orders_count: int = 0
+    released_orders_count: int = 0
+    refunded_orders_count: int = 0
 
-class DispatchRiderCreate(BaseModel):
-    full_name: str
-    email: EmailStr
-    password: str
-    phone_number: str
 
-# ── Review ─────────────────────────────────────────────────
+class EscrowReleaseResponse(BaseModel):
+    """Response for manual escrow release"""
+    message: str
+    order_id: UUID
+    amount_released: float
+    payout_reference: str
+    payout_status: str
+
 
 class CreateReviewRequest(BaseModel):
     product_id: UUID
@@ -236,32 +319,19 @@ class ReviewResponse(BaseModel):
     product_id: UUID
     rating: int
     comment: Optional[str]
+    created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# ── Squad Payment ───────────────────────────────────────────
-
-class SquadInitiateRequest(BaseModel):
-    order_id: UUID
-    payment_gateway: str = "squad"
-
-
-class SquadInitiateResponse(BaseModel):
-    transaction_ref: str
-    checkout_url: str
-    transaction_amount: int
-    authorized_channels: List[str]
-    currency: str
-    merchant_id: str
-    order_id: str
+class NotificationResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    title: str
+    message: str
+    is_read: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True
-
-
-class SquadWebhookPayload(BaseModel):
-    Event: str
-    TransactionRef: str
-    Body: dict

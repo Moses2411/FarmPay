@@ -1,80 +1,90 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
-import shutil, os, uuid
+"""
+routers/disputes.py
+Buyer raises a dispute with image evidence after delivery.
+Admin resolves via /admin/dispute/{id}/resolve.
+"""
 
-from db.database import get_db
-from db.schemas import CreateDisputeResponse
-from db.model import Dispute, DisputeImage, Order, User, Payment
+import os
+import shutil
+import uuid
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy.orm import Session
+
+
 from authentication.OAuth2 import get_current_user
+from db.database import get_db
+from db.model import Dispute, DisputeImage, Order, User
+from db.schemas import CreateDisputeResponse
 from services.disease_detector import analyze_image
+from services.cloudinary_service import upload_image_to_cloudinary
 
 router = APIRouter(prefix="/disputes", tags=["Disputes"])
 
 UPLOAD_DIR = "uploads/disputes"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+
 @router.post("/create", response_model=CreateDisputeResponse)
 def create_dispute(
     order_id: str = Form(...),
     reason: str = Form(...),
-    images: List[UploadFile] = File(...),
-
+    image: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-
     if current_user.role != "buyer":
-        raise HTTPException(status_code=403, detail="Only buyers can create disputes")
+        raise HTTPException(403, "Only buyers can raise disputes")
 
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(404, "Order not found")
 
     if order.buyer_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not your order")
+        raise HTTPException(403, "Not your order")
 
-    if order.delivery_status != "confirmed":
-        raise HTTPException(status_code=400, detail="Order not yet delivered")
+    if order.delivery_status not in ["in_transit", "delivered", "assigned"]:
+        raise HTTPException(400, "Order has not been dispatched yet")
 
-    existing = db.query(Dispute).filter(Dispute.order_id == order.id).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Dispute already exists")
+    if db.query(Dispute).filter(Dispute.order_id == order.id).first():
+        raise HTTPException(400, "A dispute already exists for this order")
 
     dispute = Dispute(
         order_id=order.id,
         buyer_id=current_user.id,
         reason=reason,
-        status="pending"
+        status="pending",
     )
-
     db.add(dispute)
     db.commit()
     db.refresh(dispute)
 
-    for image in images:
-        file_name = f"{uuid.uuid4()}.{image.filename.split('.')[-1]}"
-        file_path = os.path.join(UPLOAD_DIR, file_name)
+    ext = image.filename.split(".")[-1] if image.filename else "jpg"
+    file_name = f"{uuid.uuid4()}.{ext}"
+    file_path = os.path.join(UPLOAD_DIR, file_name)
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
 
-        result = analyze_image(file_path)
+    result = analyze_image(file_path)
 
-        dispute_image = DisputeImage(
-            dispute_id=dispute.id,
-            image_url=file_path,
-            disease_detected=not result.get("is_healthy"),
-            disease_name=result.get("name")
-        )
+    image.file.seek(0)
+    try:
+        cloudinary_url = upload_image_to_cloudinary(image)
+    except Exception:
+        cloudinary_url = file_path
 
-        db.add(dispute_image)
+    db.add(DisputeImage(
+        dispute_id=dispute.id,
+        image_url=cloudinary_url,
+        disease_detected=not result.get("is_healthy", True),
+        disease_name=result.get("name"),
+    ))
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
     order.delivery_status = "disputed"
-
     db.commit()
 
-    return {
-        "message": "Dispute submitted successfully",
-        "dispute_id": dispute.id
-    }
+    return {"message": "Dispute submitted successfully", "dispute_id": dispute.id}

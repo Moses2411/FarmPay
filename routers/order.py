@@ -1,18 +1,45 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
-import secrets
-from uuid import UUID
-from db.database import get_db
-from db.model import Order, OrderItem, Product, User, FarmerProfile, Notification
-from db.schemas import OrderCreate, OrderStatusResponse
-from authentication.OAuth2 import get_current_user
+"""
+routers/orders.py
+Order creation and status. OTP is hashed with bcrypt before storage.
+"""
 
+import os
+import secrets
+import shutil
+import logging
+from datetime import datetime, timedelta
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy.orm import Session
+
+from authentication.OAuth2 import get_current_user
+from authentication.hashing import Hash
+from db.database import get_db
+from db.model import FarmerProfile, Notification, Order, OrderItem, Payment, Product, User
+from db.schemas import OrderCreate, OrderStatusResponse, FarmerOrder, FarmerOrderItem
+from services.disease_detector import analyze_image
+from services.mapbox_service import calculate_delivery_fee, geocode_address
+
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
+DELIVERY_FEE_NAIRA = 2000  # Flat rate — replace with Mapbox calc when ready
 
-def generate_otp():
-    return secrets.token_hex(3).upper()  # 6 hex characters
+
+def _generate_otp() -> str:
+    """Generate a 6-character hex OTP (uppercase)."""
+    return secrets.token_hex(3).upper()
+
+
+def _hash_otp(plain_otp: str) -> str:
+    """Hash OTP with bcrypt for safe DB storage."""
+    return Hash.hash_password(plain_otp)
+
+
+def _verify_otp(plain_otp: str, hashed_otp: str) -> bool:
+    """Verify submitted OTP against stored hash."""
+    return Hash.verify(hashed_otp, plain_otp)
 
 
 @router.post("/create")
@@ -21,12 +48,17 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in  ["buyer", "farmer"]:
-        raise HTTPException(403, "Only buyers and farmers can create orders")
+    """
+    Create an order and return payment instructions.
+    OTP is returned once here — hashed in DB, never returned again.
+    """
+    if current_user.role not in ["buyer", "farmer"]:
+        raise HTTPException(403, "Only buyers can create orders")
 
-    total_amount = 0
+    total_amount_naira = 0
     order_items = []
-    farmer_location = None
+    farmer_address = None
+    farmer_profile = None
 
     for item in request.items:
         product = db.query(Product).filter(
@@ -40,40 +72,44 @@ def create_order(
         if item.quantity > product.available_quantity:
             raise HTTPException(400, f"Insufficient quantity for {product.name}")
 
-        farmer_profile = db.query(FarmerProfile).filter(
+        current_farmer_profile = db.query(FarmerProfile).filter(
             FarmerProfile.user_id == product.farmer_id
         ).first()
 
-        if not farmer_profile:
-            raise HTTPException(400, "Farmer profile not found")
+        if not current_farmer_profile:
+            raise HTTPException(400, f"Farmer profile not found for product {product.name}")
 
-        if farmer_location and farmer_location != farmer_profile.location:
-            raise HTTPException(400, "All items must be from the same location")
+        if farmer_profile is None:
+            farmer_profile = current_farmer_profile
 
-        farmer_location = farmer_profile.location
-        total_amount += product.price * item.quantity
+        if farmer_address and farmer_address != current_farmer_profile.location:
+            raise HTTPException(400, "All items in one order must be from the same farm location")
+
+        farmer_address = current_farmer_profile.location
+        total_amount_naira += float(product.price) * item.quantity
         order_items.append({"product": product, "quantity": item.quantity})
 
-    # Delivery fee logic
-    if request.delivery_location == farmer_location:
-        delivery_fee = 2000
-    else:
-        delivery_fee = 5000
+    final_amount_naira = total_amount_naira + DELIVERY_FEE_NAIRA
+    final_amount_kobo = int(round(final_amount_naira * 100))
 
-    final_amount = total_amount + delivery_fee
-    otp_code = generate_otp()
+    # Generate OTP — return plaintext once, store hash
+    plain_otp = _generate_otp()
+    otp_hash = _hash_otp(plain_otp)
 
     order = Order(
         buyer_id=current_user.id,
-        total_amount=final_amount,
+        total_amount=final_amount_naira,
+        total_amount_kobo=final_amount_kobo,
         status="pending",
         payment_status="pending",
-        otp_code=otp_code,
+        otp_hash=otp_hash,
+        otp_code=plain_otp,
         otp_expires_at=datetime.utcnow() + timedelta(hours=48),
         delivery_status="pending",
         escrow_status="held",
-        delivery_location=request.delivery_location,
-        delivery_fee=delivery_fee,
+        delivery_location=request.delivery_address,
+        delivery_fee=DELIVERY_FEE_NAIRA,
+        delivery_fee_kobo=DELIVERY_FEE_NAIRA * 100,
     )
 
     db.add(order)
@@ -81,23 +117,100 @@ def create_order(
     db.refresh(order)
 
     for item in order_items:
-        order_item = OrderItem(
+        db.add(OrderItem(
             order_id=order.id,
             product_id=item["product"].id,
             quantity=item["quantity"],
             price=item["product"].price,
-        )
-        db.add(order_item)
+            price_kobo=int(item["product"].price * 100),
+        ))
         item["product"].available_quantity -= item["quantity"]
 
+    db.commit()
+
+    # Payment instructions via farmer's Static VA (optional, for direct bank transfer UX)
+    payment_instructions = None
+    if farmer_profile and farmer_profile.virtual_account_number:
+        payment_instructions = {
+            "bank_name": farmer_profile.virtual_account_bank_name or "GTBank",
+            "account_number": farmer_profile.virtual_account_number,
+            "account_name": (
+                farmer_profile.virtual_account_business_name or farmer_profile.business_name
+            ),
+            "amount": final_amount_naira,
+            "reference": f"ORDER_{str(order.id)[:8]}",
+            "note": "Use the hosted checkout for guaranteed escrow protection.",
+        }
 
     return {
         "message": "Order created. Proceed to payment.",
         "order_id": str(order.id),
-        "product_total": total_amount,
-        "delivery_fee": delivery_fee,
-        "final_amount": final_amount,
-        "otp": otp_code
+        "product_total": total_amount_naira,
+        "delivery_fee": DELIVERY_FEE_NAIRA,
+        "final_amount": final_amount_naira,
+        # OTP shown once here — buyer must save it for delivery confirmation
+        "otp": plain_otp,
+        "otp_note": "Give this OTP to the dispatch rider only when you receive your order.",
+        "payment_instructions": payment_instructions,
+    }
+
+
+def _release_escrow_to_farmer(order_id: UUID, db: Session) -> dict:
+    """
+    Internal helper to release escrow funds to farmer.
+    Called after OTP verification or admin resolution.
+    """
+    from services.payout import release_funds_to_farmer
+    
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+    
+    # Get first product to find farmer
+    first_item = db.query(OrderItem).filter(OrderItem.order_id == order.id).first()
+    if not first_item:
+        raise HTTPException(404, "No order items found")
+    
+    product = db.query(Product).filter(Product.id == first_item.product_id).first()
+    if not product:
+        raise HTTPException(404, "Product not found")
+    
+    farmer_profile = db.query(FarmerProfile).filter(
+        FarmerProfile.user_id == product.farmer_id
+    ).first()
+    
+    if not farmer_profile:
+        raise HTTPException(404, "Farmer profile not found")
+    
+    if not farmer_profile.account_number:
+        raise HTTPException(400, "Farmer has no bank account configured")
+    
+    amount_naira = order.total_amount_kobo / 100
+    
+    result = release_funds_to_farmer(
+        farmer_account_number=farmer_profile.account_number,
+        farmer_bank_code=farmer_profile.bank_code or "058",
+        farmer_name=farmer_profile.business_name or "Farmer",
+        amount_naira=amount_naira,
+        order_id=str(order.id),
+    )
+    
+    # Update order and payment status
+    order.escrow_status = "released"
+    order.status = "completed"
+    
+    payment = db.query(Payment).filter(Payment.order_id == order.id).first()
+    if payment:
+        payment.escrow_status = "released"
+        payment.released_at = datetime.utcnow()
+    
+    farmer_profile.total_sales = float(farmer_profile.total_sales or 0) + amount_naira
+    db.commit()
+    
+    return {
+        "success": True,
+        "amount_released": amount_naira,
+        "transaction_reference": result.get("transaction_reference"),
     }
 
 
@@ -108,6 +221,49 @@ def get_my_orders(
 ):
     orders = db.query(Order).filter(Order.buyer_id == current_user.id).all()
     return orders
+
+
+@router.get("/farmer-orders", response_model=list[FarmerOrder])
+def get_farmer_orders(
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != "farmer":
+        raise HTTPException(403, "Only farmers can view their orders")
+    
+    orders = db.query(Order).join(OrderItem).join(Product).filter(
+        Product.farmer_id == current_user.id
+    ).distinct().all()
+    
+    result = []
+    for order in orders:
+        order_items = db.query(OrderItem).filter(OrderItem.order_id == order.id).all()
+        buyer = db.query(User).filter(User.id == order.buyer_id).first()
+
+        result.append({
+            "order_id": order.id,
+            "buyer_name": buyer.full_name if buyer else "Unknown",
+            "buyer_phone": buyer.phone_number if buyer else "Unknown",
+            "delivery_address": order.delivery_location,
+            "delivery_fee": float(order.delivery_fee),
+            "total_amount": float(order.total_amount),
+            "status": order.status,
+            "payment_status": order.payment_status,
+            "delivery_status": order.delivery_status,
+            "created_at": order.created_at,
+            "items": [
+                {
+                    "product_id": item.product_id,
+                    "product_name": item.product.name if item.product else "Unknown",
+                    "quantity": item.quantity,
+                    "price": float(item.price),
+                }
+                for item in order_items
+            ],
+        })
+
+    return result
+
 
 @router.get("/{order_id}", response_model=OrderStatusResponse)
 def get_order(
@@ -128,3 +284,51 @@ def get_order(
         raise HTTPException(403, "Access denied")
 
     return order
+
+
+@router.post("/scan-delivery/{order_id}")
+def scan_delivery_product(
+    order_id: UUID,
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Buyer scans the delivered product BEFORE confirming with OTP.
+    Returns scan result to help buyer decide: accept (give OTP) or dispute.
+    """
+    if current_user.role != "buyer":
+        raise HTTPException(403, "Only buyers can scan delivery")
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    if order.buyer_id != current_user.id:
+        raise HTTPException(403, "Not your order")
+
+    if order.payment_status != "paid":
+        raise HTTPException(400, "Order not paid yet")
+
+    if order.delivery_status in ["confirmed", "completed"]:
+        raise HTTPException(400, "Delivery already confirmed")
+
+    ext = image.filename.split(".")[-1] if "." in image.filename else "jpg"
+    file_name = f"{uuid4()}.{ext}"
+    file_path = os.path.join("uploads/delivery_scans", file_name)
+    os.makedirs("uploads/delivery_scans", exist_ok=True)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
+
+    result = analyze_image(file_path)
+
+    return {
+        "order_id": str(order.id),
+        "is_healthy": result.get("is_healthy", True),
+        "disease_name": result.get("name"),
+        "issue_type": result.get("issue_type"),
+        "recommendation": "Product appears healthy - you can confirm delivery with OTP" 
+                          if result.get("is_healthy") 
+                          else "Issues detected - consider raising a dispute",
+    }

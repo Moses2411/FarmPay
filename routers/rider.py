@@ -1,15 +1,19 @@
-from fastapi import APIRouter, HTTPException
-from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
-from db.database import get_db
-from db.model import Order, User, Payment
-from authentication.OAuth2 import get_current_user
-from services.payout import release_funds_to_farmer
 from uuid import UUID
 
+from db.database import get_db
+from db.model import FarmerProfile, Order, OrderItem, Payment, Product, User
+from authentication.OAuth2 import get_current_user
+from authentication.hashing import Hash
+from services.payout import release_funds_to_farmer
+
 router = APIRouter(prefix="/rider", tags=["Rider"])
+
+
+def _verify_otp(plain_otp: str, hashed_otp: str) -> bool:
+    return Hash.verify(hashed_otp, plain_otp)
 
 
 @router.post("/confirm-delivery/{order_id}")
@@ -32,34 +36,47 @@ def confirm_delivery(
     if order.is_otp_verified:
         raise HTTPException(status_code=400, detail="Delivery already confirmed")
 
-    if order.otp_code != otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
+    if not order.otp_hash:
+        raise HTTPException(status_code=500, detail="No OTP on record for this order")
 
-    if order.otp_expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="OTP expired")
+    if not _verify_otp(otp.strip().upper(), order.otp_hash):
+        raise HTTPException(status_code=400, detail="Invalid OTP")
 
     order.is_otp_verified = True
     order.delivery_status = "confirmed"
     order.confirmed_at = datetime.utcnow()
+    order.status = "completed"
 
     payment = db.query(Payment).filter(Payment.order_id == order.id).first()
 
     if payment and payment.escrow_status == "held":
-        try:
-            payout_response = release_funds_to_farmer(
-                farmer_account_number="0000000000",
-                farmer_bank_code="000",
-                farmer_name="Farmer",
-                amount_naira=payment.amount,
-                order_id=str(order.id)
-            )
+        first_item = db.query(OrderItem).filter(OrderItem.order_id == order.id).first()
+        if first_item:
+            product = db.query(Product).filter(Product.id == first_item.product_id).first()
+            if product:
+                farmer_profile = db.query(FarmerProfile).filter(
+                    FarmerProfile.user_id == product.farmer_id
+                ).first()
 
-            payment.escrow_status = "released"
-            payment.released_at = datetime.utcnow()
+                if farmer_profile and farmer_profile.account_number:
+                    try:
+                        bank_code = farmer_profile.settlement_bank_code or farmer_profile.bank_code or "058"
+                        account_number = farmer_profile.settlement_account_number or farmer_profile.account_number
+                        release_funds_to_farmer(
+                            farmer_account_number=account_number,
+                            farmer_bank_code=bank_code,
+                            farmer_name=farmer_profile.business_name or "Farmer",
+                            amount_naira=float(payment.amount),
+                            order_id=str(order.id)
+                        )
+                        payment.escrow_status = "released"
+                        payment.released_at = datetime.utcnow()
+                    except Exception as e:
+                        raise HTTPException(status_code=500, detail=f"Payout failed: {str(e)}")
 
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Payout failed: {str(e)}")
+    db.commit()
 
+    current_user.is_available = True
     db.commit()
 
     return {
@@ -109,4 +126,22 @@ def mark_picked_up(
     return {
         "message": "Order marked as picked up and in transit.",
         "order_id": str(order_id),
+    }
+
+
+@router.post("/status")
+def update_rider_status(
+    is_available: bool,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != "dispatch_rider":
+        raise HTTPException(403, "Only dispatch riders can update status")
+
+    current_user.is_available = is_available
+    db.commit()
+
+    return {
+        "message": f"Rider status set to {'available' if is_available else 'busy'}",
+        "is_available": current_user.is_available,
     }
