@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { 
-  TrendingUp, TrendingDown, Package, Users, 
-  Naira, Calendar, ArrowUp, ArrowDown, 
+import {
+  TrendingUp, TrendingDown, Package, Users,
+  DollarSign, Calendar, ArrowUp, ArrowDown,
   BarChart3, PieChart, Activity
 } from 'lucide-vue-next';
 
@@ -102,7 +102,7 @@ const formatCurrency = (value) => {
       <div class="bg-[#0d2010] border border-white/10 rounded-2xl p-4">
         <div class="flex items-center justify-between mb-3">
           <div class="p-2 bg-[#5cb83a]/10 rounded-xl">
-            <Naira :size="18" class="text-[#5cb83a]" />
+            <DollarSign :size="18" class="text-[#5cb83a]" />
           </div>
           <span 
             class="flex items-center gap-1 text-[10px] font-bold"
