@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import {
   Wallet, Truck, ArrowRight,
   TrendingUp, Users, CheckCircle2,
-  Camera, Microscope, Lock
+  Camera, Microscope, Lock, ShieldCheck
 } from 'lucide-vue-next';
 
 const stats = ref([
